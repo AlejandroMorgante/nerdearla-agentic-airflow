@@ -1,7 +1,8 @@
-"""ETL mínimo: si transform falla, AgentCore recibe el incidente y hace el triage."""
+"""Una división por cero dispara el triage asíncrono en AgentCore."""
 
 from airflow.providers.amazon.aws.operators.bedrock import BedrockInvokeAgentRuntimeOperator
 from airflow.providers.standard.operators.bash import BashOperator
+from airflow.providers.standard.operators.empty import EmptyOperator
 from airflow.sdk import DAG
 from airflow.task.trigger_rule import TriggerRule
 
@@ -14,29 +15,12 @@ with DAG(
     default_args={"retries": 0},
     tags=["workshop", "agentic-airflow"],
 ) as dag:
-    extract = BashOperator(
-        task_id="extract",
-        bash_command='echo \'[{"order_id": 1, "amount": 100}, {"order_id": 2, "amount": 50}]\'',
+    divide_numbers = BashOperator(
+        task_id="divide_numbers",
+        bash_command="python -c 'print(10 / 0)'",
     )
 
-    transform = BashOperator(
-        task_id="transform",
-        env={"ORDERS": "{{ ti.xcom_pull(task_ids='extract') }}"},
-        append_env=True,
-        # Falla intencional: los registros contienen "amount", no "total".
-        bash_command="""python - <<'PY'
-import json, os
-orders = json.loads(os.environ["ORDERS"])
-print(json.dumps({"revenue": sum(order["total"] for order in orders)}))
-PY""",
-    )
-
-    load = BashOperator(
-        task_id="load",
-        env={"SUMMARY": "{{ ti.xcom_pull(task_ids='transform') }}"},
-        append_env=True,
-        bash_command='echo "Resultado: $SUMMARY"',
-    )
+    finish = EmptyOperator(task_id="finish")
 
     investigate_failure = BedrockInvokeAgentRuntimeOperator(
         task_id="investigate_failure",
@@ -46,7 +30,7 @@ PY""",
             "environment_name": "{{ var.value.mwaa_environment_name }}",
             "dag_id": "{{ dag.dag_id }}",
             "run_id": "{{ run_id }}",
-            "task_id": "transform",
+            "task_id": "divide_numbers",
         },
         invoke_agent_runtime_kwargs={"qualifier": "workshop"},
         aws_conn_id=None,
@@ -54,6 +38,4 @@ PY""",
         botocore_config={"read_timeout": 120, "retries": {"total_max_attempts": 1}},
     )
 
-    extract >> transform >> load
-    transform >> investigate_failure
-    # load queda upstream_failed: aceptar el incidente no vuelve exitoso al DAG.
+    divide_numbers >> [finish, investigate_failure]

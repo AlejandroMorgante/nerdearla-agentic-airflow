@@ -149,7 +149,7 @@ El output `runtime_arn` y el endpoint `workshop` se usarán al conectar el
 `invoke_agent_runtime_kwargs={"qualifier": "workshop"}`.
 En la UI de Airflow, crear las Variables `agentcore_runtime_arn` (output
 `runtime_arn`) y `mwaa_environment_name` (output del mismo nombre). La rama
-`investigate_failure` invoca el agente cuando falla `transform`. Después de
+`investigate_failure` invoca el agente cuando falla `divide_numbers`. Después de
 actualizar el DAG local, ejecutar `terraform apply` para publicarlo en S3.
 
 Antes de la demo, comprobar MWAA `AVAILABLE`, Runtime y endpoint `READY`, la

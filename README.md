@@ -36,11 +36,10 @@ correctamente a una prueba mínima con credenciales locales de desarrollo en `us
 Ese profile no se copia a la imagen: AgentCore usará su propio rol IAM.
 No se necesitan credenciales para importar el módulo ni ejecutar tests.
 
-El DAG usa la interfaz de Airflow 3 y falla en `transform` porque intenta leer
-`total` en registros que contienen `amount`. El resultado esperado después de
-corregirlo es `{"revenue": 150}`. Si falla `transform`, la tarea
+El DAG usa la interfaz de Airflow 3, sin decorators. La tarea `divide_numbers`
+ejecuta `python -c 'print(10 / 0)'` y falla con `ZeroDivisionError`. La tarea
 `investigate_failure` invoca AgentCore mediante `BedrockInvokeAgentRuntimeOperator`.
-El DAG usa `DAG` y operadores explícitos, sin decorators.
+`finish` queda `upstream_failed`, conservando el estado fallado del DAG.
 
 ## Construir el contenedor
 
@@ -165,27 +164,27 @@ La validación rechaza campos adicionales y entornos o DAGs fuera del alcance.
   "environment_name": "workshop-mwaa",
   "dag_id": "demo_pipeline",
   "run_id": "<run_id de la ejecución fallida>",
-  "task_id": "transform"
+  "task_id": "divide_numbers"
 }
 ```
 
 ## Invocación y triage en segundo plano
 
 ```text
-extract → transform → load
-              └─ si falla → investigate_failure → AgentCore
+divide_numbers → finish
+       └─ si falla → investigate_failure → AgentCore
 ```
 
-El DAG usa tres `BashOperator` con comandos visibles y un
+El DAG usa un `BashOperator` que divide por cero, un `EmptyOperator` final y un
 `BedrockInvokeAgentRuntimeOperator`. El agente valida el incidente, responde
 `{"status": "accepted", "incident": {...}}` y sigue investigando en un hilo separado.
 El SDK registra el trabajo con `add_async_task` y mantiene `/ping` en `HealthyBusy`
 hasta que el triage termina; `complete_async_task` libera ese estado en un `finally`.
 
 El DAG espera sólo la recepción HTTP, no el diagnóstico. No hay `check_result`,
-XCom de la investigación ni reintentos automáticos de esa invocación. `load` queda
-`upstream_failed` si falla `transform`, por lo que el DAG termina fallado incluso
-si el incidente fue aceptado. En esta demo se investiga la falla de `transform`.
+XCom de la investigación ni reintentos automáticos de esa invocación. `finish` queda
+`upstream_failed` si falla `divide_numbers`, por lo que el DAG termina fallado incluso
+si el incidente fue aceptado. En esta demo se investiga la falla de `divide_numbers`.
 
 El agente se ocupa de leer logs, revisar código, abrir una draft PR y notificar
 por Slack. El resultado completo queda en los logs de AgentCore; la PR y Slack
