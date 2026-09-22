@@ -24,6 +24,6 @@ invalid = sales.filter(
 if not sales.take(1) or invalid.take(1):
     raise ValueError("El archivo está vacío o contiene ventas inválidas.")
 
-(sales.withColumn("amount", F.col("quantity") * F.col("unit_price"))
+(sales.withColumn("amount", (F.col("quantity") * F.col("unit_price")).cast("decimal(18,2)"))
  .write.mode("overwrite").parquet(args["OUTPUT_URI"]))
 job.commit()

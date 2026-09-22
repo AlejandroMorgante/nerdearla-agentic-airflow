@@ -1,5 +1,6 @@
-"""Ingesta de ventas: esperar un CSV en S3 y procesarlo con Glue."""
+"""Ingesta de ventas: esperar un CSV en S3 y procesarlo con Glue y resumirlo con Athena."""
 
+from airflow.providers.amazon.aws.operators.athena import AthenaOperator
 from airflow.providers.amazon.aws.operators.bedrock import BedrockInvokeAgentRuntimeOperator
 from airflow.providers.amazon.aws.operators.glue import GlueJobOperator
 from airflow.providers.amazon.aws.sensors.s3 import S3KeySensor
@@ -27,7 +28,6 @@ with DAG(
         timeout=300,
     )
 
-    # Si el sensor falla, esta hoja queda upstream_failed y el DAG sigue fallado.
     process_sales = GlueJobOperator(
         task_id="process_sales",
         job_name="{{ var.value.sales_glue_job }}",
@@ -36,6 +36,20 @@ with DAG(
         wait_for_completion=True,
         deferrable=False,
         verbose=False,
+    )
+
+    summarize_sales = AthenaOperator(
+        task_id="summarize_sales",
+        query="""
+            SELECT product, SUM(quantity) AS units, SUM(amount) AS revenue
+            FROM sales
+            GROUP BY product
+            ORDER BY revenue DESC
+        """,
+        database="{{ var.value.sales_database }}",
+        workgroup="{{ var.value.sales_athena_workgroup }}",
+        aws_conn_id=None,
+        deferrable=False,
     )
 
     investigate_failure = BedrockInvokeAgentRuntimeOperator(
@@ -54,4 +68,5 @@ with DAG(
         botocore_config={"read_timeout": 120, "retries": {"total_max_attempts": 1}},
     )
 
-    wait_for_sales >> [process_sales, investigate_failure]
+    wait_for_sales >> process_sales >> summarize_sales
+    wait_for_sales >> investigate_failure

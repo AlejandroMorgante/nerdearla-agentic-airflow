@@ -12,6 +12,7 @@ infra/
   mwaa/             # Airflow, IAM, logs y requirements.txt
   vpc/              # Red, subnets y NAT
   s3/               # Artefactos, buckets de ventas y CSV de ejemplo
+  athena/           # Workgroup y ubicación del reporte
   glue/             # Job Spark, script, rol y logs
   ecr/              # Repositorio de imágenes
   secrets-manager/  # Secretos vacíos de GitHub y Slack
@@ -151,7 +152,7 @@ El token de GitHub necesita Contents y Pull requests con escritura en este repo.
 El Runtime puede crearse con secretos vacíos; esas tools funcionarán después de
 completarlos. Para Slack se usa un Incoming Webhook.
 
-Terraform crea `mwaa_environment_name`, `sales_input_bucket`, `sales_glue_job` y, al habilitar el Runtime,
+Terraform crea `mwaa_environment_name`, `sales_input_bucket`, `sales_glue_job`, `sales_database`, `sales_athena_workgroup` y, al habilitar el Runtime,
 `agentcore_runtime_arn` bajo `${project}/airflow/variables/` en Secrets Manager.
 También configura el backend de Airflow y el permiso de lectura del rol de MWAA;
 no hay que cargar Variables en la UI. Son referencias de infraestructura, sin tokens,
@@ -184,8 +185,10 @@ comprobar existencia, pero no implica que MWAA tenga ese mismo acceso.
 
 Glue usa su propio rol y un script Spark en `glue/sales.py`. Si se decide aplicar
 el fix y probar el procesamiento, genera Parquet en `sales/` del bucket de salida.
-El job usa dos workers G.1X, máximo diez minutos, sin reintentos. No hay Athena
-ni Lambda en este ejemplo.
+El job usa dos workers G.1X, máximo diez minutos, sin reintentos. Athena consulta la tabla `sales` del catálogo Glue y genera el resumen por producto
+en `athena-results/`, separado del Parquet. Terraform crea el catálogo y un workgroup
+con límite de lectura de 10 MiB por consulta. MWAA tampoco tiene permisos Athena,
+lectura del catálogo ni acceso a los resultados: son parte del incidente intencional.
 
 ## Limpieza
 

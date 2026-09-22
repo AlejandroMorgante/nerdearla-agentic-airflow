@@ -53,9 +53,11 @@ module "secrets_manager" {
   config = local.config
   airflow_variables = merge(
     {
-      mwaa_environment_name = local.config.project
-      sales_input_bucket    = module.s3.sales_input_bucket
-      sales_glue_job        = module.glue.job_name
+      mwaa_environment_name  = local.config.project
+      sales_input_bucket     = module.s3.sales_input_bucket
+      sales_glue_job         = module.glue.job_name
+      sales_database         = module.glue.database_name
+      sales_athena_workgroup = module.athena.workgroup_name
     },
     var.agent_image_tag == null ? {} : { agentcore_runtime_arn = module.agentcore.runtime_arn },
   )
@@ -72,6 +74,12 @@ module "glue" {
   artifacts_bucket = module.s3.bucket_name
   input_bucket     = module.s3.sales_input_bucket
   output_bucket    = module.s3.sales_output_bucket
+}
+
+module "athena" {
+  source        = "./athena"
+  config        = local.config
+  output_bucket = module.s3.sales_output_bucket
 }
 
 module "mwaa" {

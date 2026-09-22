@@ -19,6 +19,7 @@ infra/
   agentcore/        # Runtime, endpoint, permisos y logs
   mwaa/             # Airflow, permisos, logs y requisitos
   vpc/              # Red del workshop
+  athena/           # Workgroup y ubicación del reporte
   glue/             # Job de ventas, script e IAM
   s3/               # DAGs y artefactos
   ecr/              # Imágenes del agente
@@ -40,7 +41,7 @@ No se necesitan credenciales para importar el módulo ni ejecutar tests.
 El DAG usa operadores nativos de AWS, sin decorators:
 
 ```text
-wait_for_sales (S3KeySensor) → process_sales (GlueJobOperator)
+wait_for_sales (S3KeySensor) → process_sales (GlueJobOperator) → summarize_sales (AthenaOperator)
        └─ si falla → investigate_failure → AgentCore
 ```
 
@@ -196,16 +197,18 @@ La validación rechaza campos adicionales y entornos o DAGs fuera del alcance.
 
 ## Invocación y triage en segundo plano
 
-El DAG usa `S3KeySensor`, `GlueJobOperator` y `BedrockInvokeAgentRuntimeOperator`.
+El DAG usa `S3KeySensor`, `GlueJobOperator`, `AthenaOperator` y
+`BedrockInvokeAgentRuntimeOperator`. Athena resume unidades e importe por producto
+y guarda el resultado en `athena-results/` del bucket de salida.
 El agente valida el incidente, responde `{"status": "accepted", "incident": {...}}`
 y sigue investigando en un hilo separado. El SDK registra el trabajo con
 `add_async_task` y mantiene `/ping` en `HealthyBusy` hasta que el triage termina;
 `complete_async_task` libera ese estado en un `finally`.
 
 El DAG espera sólo la recepción HTTP, no el diagnóstico. No hay `check_result`,
-XCom de la investigación ni reintentos automáticos de esa invocación. La tarea
-Glue queda `upstream_failed` cuando falla el sensor, preservando el DAG fallido.
-La rama de triage cubre la falla del sensor; no las fallas posteriores de Glue.
+XCom de la investigación ni reintentos automáticos de esa invocación. Las tareas
+Glue y Athena quedan `upstream_failed` cuando falla el sensor, preservando el DAG fallido.
+La rama de triage cubre la falla del sensor; no las fallas posteriores de Glue o Athena.
 
 El agente se ocupa de leer logs, revisar código, abrir una draft PR y notificar
 por Slack. El resultado completo queda en los logs de AgentCore; la PR y Slack
@@ -217,7 +220,7 @@ pierde, el trabajo en memoria puede perderse. `accepted` confirma recepción,
 no recuperación ni entrega garantizada. No se habilita merge ni rerun automático.
 
 Terraform crea las Variables `agentcore_runtime_arn`, `mwaa_environment_name`,
-`sales_input_bucket` y `sales_glue_job`
+`sales_input_bucket`, `sales_glue_job`, `sales_database` y `sales_athena_workgroup`
 en Secrets Manager y configura el backend de Airflow para consultarlas.
 No hay que cargarlas en la UI; tampoco aparecen en el listado de Variables de la UI.
 Se resuelven al ejecutar la tarea, no al importar el DAG. El operador usa el rol

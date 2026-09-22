@@ -17,8 +17,10 @@ spec.loader.exec_module(module)
 class DemoPipelineTests(unittest.TestCase):
     def test_failure_is_not_hidden_by_successful_investigation(self):
         dag = module.dag
-        self.assertEqual({t.task_id for t in dag.leaves}, {"process_sales", "investigate_failure"})
+        self.assertEqual({t.task_id for t in dag.leaves}, {"summarize_sales", "investigate_failure"})
         self.assertEqual(dag.get_task("process_sales").trigger_rule, TriggerRule.ALL_SUCCESS)
+        self.assertEqual(dag.get_task("summarize_sales").trigger_rule, TriggerRule.ALL_SUCCESS)
+        self.assertEqual(dag.get_task("summarize_sales").upstream_task_ids, {"process_sales"})
         investigation = dag.get_task("investigate_failure")
         self.assertIsInstance(investigation, BedrockInvokeAgentRuntimeOperator)
         self.assertEqual(investigation.upstream_task_ids, {"wait_for_sales"})
@@ -47,6 +49,18 @@ class DemoPipelineTests(unittest.TestCase):
             "run_id": "manual__incident", "task_id": "wait_for_sales",
         })
         self.assertEqual(result["response"]["status"], "accepted")
+
+    def test_athena_renders_catalog_and_workgroup(self):
+        import copy
+        from airflow.providers.amazon.aws.operators.athena import AthenaOperator
+        task = copy.deepcopy(module.summarize_sales)
+        self.assertIsInstance(task, AthenaOperator)
+        task.render_template_fields({"var": {"value": {
+            "sales_database": "workshop_sales", "sales_athena_workgroup": "workshop-sales",
+        }}})
+        self.assertEqual(task.database, "workshop_sales")
+        self.assertEqual(task.workgroup, "workshop-sales")
+        self.assertIn("SUM(amount)", task.query)
 
     def test_sensor_propagates_access_denied_instead_of_waiting(self):
         from botocore.exceptions import ClientError
