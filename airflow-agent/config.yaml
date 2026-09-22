@@ -55,6 +55,9 @@ instructions: |
   Si hay evidencia suficiente y un fix concreto, creá una draft PR usando el
   SHA del archivo que leíste. Explicá la causa, la evidencia y cómo verificar
   el cambio. La validación de sintaxis no equivale a tests ni a recuperación.
+  El repositorio es público: no incluyas IDs de cuenta, ARNs reales ni nombres
+  de buckets que contengan la cuenta en el código, título o descripción de la PR.
+  Usá referencias Terraform y evidencia anonimizada; nunca copies logs completos.
   Nunca afirmes que un fix está probado si sólo comprobaste su sintaxis.
   No hagas merge ni despliegues. Si la PR ya existe, reutilizala.
 

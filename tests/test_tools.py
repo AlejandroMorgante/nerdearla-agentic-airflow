@@ -115,6 +115,15 @@ class ToolsTest(unittest.TestCase):
         self.assertEqual(github.call_count, 1)
         self.assertEqual(github.call_args.args[0], "GET")
 
+    def test_public_pr_rejects_account_identifiers_before_any_github_call(self):
+        fields = {"content": "amount = 150\n", "title": "Fix", "description": "Diagnosis"}
+        for field in fields:
+            with self.subTest(field=field), patch.object(tools, "_github") as github:
+                proposal = dict(fields, **{field: fields[field] + " # bucket-123456789012"})
+                with self.assertRaisesRegex(ValueError, "IDs de cuenta"):
+                    tools.create_fix_pr("incident", "sha", **proposal)
+                github.assert_not_called()
+
     def test_stale_fix_is_rejected_before_branch_creation(self):
         with patch.object(tools, "_github", side_effect=[[], None, {"object": {"sha": "commit"}}]) as github, \
                 patch.object(tools, "_repo_file", return_value={"sha": "new", "content": "old"}):

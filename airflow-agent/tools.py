@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 from functools import lru_cache
 from urllib.parse import quote, urlparse
 
@@ -262,6 +263,9 @@ def create_fix_pr(incident_id: str, original_sha: str, content: str,
         raise ValueError("Se requieren incidente, título y descripción.")
     if not path.endswith((".py", ".tf")) or not content.strip() or len(content.encode()) > MAX_FILE_BYTES:
         raise ValueError("La corrección debe ser un archivo Python o Terraform de hasta 100 KB.")
+    # El repo de la demo es público: usar referencias Terraform, no IDs de cuenta.
+    if re.search(r"(?<!\d)\d{12}(?!\d)", "\n".join((content, title, description))):
+        raise ValueError("La PR pública no puede incluir IDs de cuenta AWS. Usar referencias o placeholders.")
     if path.endswith(".py"):
         ast.parse(content)
     base = _setting("GITHUB_BASE_BRANCH", "main")
