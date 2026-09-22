@@ -1,8 +1,10 @@
 """Agente de investigación de Airflow, expuesto por AgentCore Runtime."""
 
+import asyncio
 import json
 import os
 import time
+import threading
 from pathlib import Path
 
 import yaml
@@ -137,9 +139,8 @@ class Investigation:
                 **details}
 
 
-@app.entrypoint
-async def invoke(payload: dict) -> dict:
-    """Recibe el payload del operador de AgentCore y ejecuta una investigación."""
+def validate_incident(payload: dict) -> Incident | dict:
+    """Valida el contexto antes de aceptar trabajo en segundo plano."""
     try:
         incident = Incident.model_validate(payload)
     except ValidationError:
@@ -149,6 +150,14 @@ async def invoke(payload: dict) -> dict:
         return {"status": "configuration_error", "message": "Falta MWAA_ENVIRONMENT_NAME."}
     if incident.environment_name != environment or incident.dag_id != os.environ.get("AIRFLOW_DAG_ID", "demo_pipeline"):
         return {"status": "invalid_input", "message": "Entorno o DAG fuera del alcance configurado."}
+    return incident
+
+
+async def investigate(payload: dict) -> dict:
+    """Ejecuta el loop de Strands; su resultado queda fuera del DAG."""
+    incident = validate_incident(payload)
+    if isinstance(incident, dict):
+        return incident
     try:
         config = load_config()
     except (OSError, ValueError, yaml.YAMLError):
@@ -184,6 +193,36 @@ async def invoke(payload: dict) -> dict:
     except Exception as error:
         # No incluir mensajes de excepciones que puedan contener URLs, tokens o logs.
         return investigation.response("error", error_type=type(error).__name__)
+
+
+def investigate_in_background(payload: dict, task_id: int) -> None:
+    try:
+        result = asyncio.run(investigate(payload))
+        app.logger.info("Investigation result: %s", json.dumps(result, ensure_ascii=False))
+    except Exception as error:
+        app.logger.error("Investigation failed: %s", type(error).__name__)
+    finally:
+        app.complete_async_task(task_id)
+
+
+@app.entrypoint
+async def invoke(payload: dict) -> dict:
+    """Acepta el incidente y responde sin esperar el triage."""
+    incident = validate_incident(payload)
+    if isinstance(incident, dict):
+        return incident
+    try:
+        load_config()
+    except (OSError, ValueError, yaml.YAMLError):
+        return {"status": "configuration_error", "message": "Revisar config.yaml."}
+    task_id = app.add_async_task("airflow_triage", incident.model_dump())
+    try:
+        threading.Thread(target=investigate_in_background,
+                         args=(incident.model_dump(), task_id), daemon=True).start()
+    except Exception as error:
+        app.complete_async_task(task_id)
+        return {"status": "error", "error_type": type(error).__name__}
+    return {"status": "accepted", "incident": incident.model_dump()}
 
 
 if __name__ == "__main__":

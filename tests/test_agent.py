@@ -63,7 +63,7 @@ class AgentTest(unittest.IsolatedAsyncioTestCase):
         with patch.object(agent, "BedrockModel", return_value=model), \
                 patch.object(agent, "get_tools", return_value=tools or []), \
                 patch.object(agent, "load_config", return_value=config or agent.load_config()):
-            return await agent.invoke(copy.deepcopy(EVENT))
+            return await agent.investigate(copy.deepcopy(EVENT))
 
     async def test_invalid_payload_and_wrong_environment_do_not_invoke_model(self):
         with patch.object(agent, "BedrockModel") as model:
@@ -75,6 +75,37 @@ class AgentTest(unittest.IsolatedAsyncioTestCase):
     async def test_missing_runtime_configuration(self):
         os.environ.pop("MWAA_ENVIRONMENT_NAME")
         self.assertEqual((await agent.invoke(EVENT))["status"], "configuration_error")
+
+    async def test_acknowledges_before_background_investigation_finishes(self):
+        import asyncio
+        import threading
+        release, finished = threading.Event(), threading.Event()
+
+        async def slow_investigation(payload):
+            release.wait(timeout=5)
+            return {"status": "completed"}
+
+        with patch.object(agent, "investigate", side_effect=slow_investigation), \
+             patch.object(agent.app, "add_async_task", return_value=123) as started, \
+             patch.object(agent.app, "complete_async_task", side_effect=lambda _: finished.set()) as completed:
+            try:
+                result = await agent.invoke(EVENT)
+                self.assertEqual(result["status"], "accepted")
+                started.assert_called_once()
+                completed.assert_not_called()
+            finally:
+                release.set()
+                self.assertTrue(await asyncio.to_thread(finished.wait, 5))
+            completed.assert_called_once_with(123)
+
+    async def test_background_failure_releases_busy_state(self):
+        with patch.object(agent, "investigate", side_effect=RuntimeError("private-token")), \
+             patch.object(agent.app, "complete_async_task") as completed, \
+             patch.object(agent.app.logger, "error") as log:
+            import asyncio
+            await asyncio.to_thread(agent.investigate_in_background, EVENT, 123)
+            completed.assert_called_once_with(123)
+            self.assertNotIn("private-token", str(log.call_args))
 
     async def test_config_requires_positive_limits(self):
         config = agent.load_config().model_dump()

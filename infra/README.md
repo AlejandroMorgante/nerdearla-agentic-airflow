@@ -89,7 +89,7 @@ Los valores de GitHub y Slack nunca se cargan mediante Terraform ni entran al st
 
 ## Desplegar
 
-Todavía no se desplegó infraestructura. Los `apply` crean recursos facturables,
+Los `apply` crean recursos facturables,
 incluyendo MWAA y NAT mientras estén activos.
 
 1. Tener el AWS CLI autenticado y revisar los parámetros de `infra/config.yaml`:
@@ -147,7 +147,10 @@ completarlos. Para Slack se usa un Incoming Webhook.
 El output `runtime_arn` y el endpoint `workshop` se usarán al conectar el
 `BedrockInvokeAgentRuntimeOperator`, con
 `invoke_agent_runtime_kwargs={"qualifier": "workshop"}`.
-El DAG todavía no tiene cableado el manejo de fallos.
+En la UI de Airflow, crear las Variables `agentcore_runtime_arn` (output
+`runtime_arn`) y `mwaa_environment_name` (output del mismo nombre). La rama
+`investigate_failure` invoca el agente cuando falla `transform`. Después de
+actualizar el DAG local, ejecutar `terraform apply` para publicarlo en S3.
 
 Antes de la demo, comprobar MWAA `AVAILABLE`, Runtime y endpoint `READY`, la
 instalación de los requisitos y una investigación completa. La validación local

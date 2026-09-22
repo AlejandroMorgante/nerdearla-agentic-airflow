@@ -38,7 +38,9 @@ No se necesitan credenciales para importar el módulo ni ejecutar tests.
 
 El DAG usa la interfaz de Airflow 3 y falla en `transform` porque intenta leer
 `total` en registros que contienen `amount`. El resultado esperado después de
-corregirlo es `{"revenue": 150}`. Todavía no invoca AgentCore.
+corregirlo es `{"revenue": 150}`. Si falla `transform`, la tarea
+`investigate_failure` invoca AgentCore mediante `BedrockInvokeAgentRuntimeOperator`.
+El DAG usa `DAG` y operadores explícitos, sin decorators.
 
 ## Construir el contenedor
 
@@ -167,56 +169,49 @@ La validación rechaza campos adicionales y entornos o DAGs fuera del alcance.
 }
 ```
 
-## Resultado de la investigación
+## Invocación y triage en segundo plano
 
-El agente devuelve un objeto JSON. Ejemplo ilustrativo (no es un incidente real):
-
-```json
-{
-  "status": "completed",
-  "incident": {
-    "environment_name": "workshop-mwaa",
-    "dag_id": "demo_pipeline",
-    "run_id": "manual__example",
-    "task_id": "transform"
-  },
-  "diagnosis": "La tarea lee total, pero los registros contienen amount. PR pendiente de revisión.",
-  "actions": [
-    {"tool": "get_dag_run", "status": "success"},
-    {"tool": "create_fix_pr", "status": "success"},
-    {"tool": "send_slack_message", "status": "success"}
-  ],
-  "pull_request_url": "https://github.com/owner/repo/pull/123",
-  "slack_status": "sent",
-  "recovery_run_id": null,
-  "tool_calls": 3,
-  "stop_reason": "end_turn",
-  "limit_reason": null,
-  "usage": {"inputTokens": 2000, "outputTokens": 500, "totalTokens": 2500}
-}
+```text
+extract → transform → load
+              └─ si falla → investigate_failure → AgentCore
 ```
 
-El diagnóstico es texto del modelo. `actions`, `pull_request_url`, `slack_status`
-y `recovery_run_id` se derivan de las tools, no de afirmaciones del modelo.
-Los errores conservan las acciones ya confirmadas. `completed` significa que
-terminó la investigación, no que el pipeline se haya recuperado. Otros estados:
-`needs_attention`, `limited`, `incomplete`, `error`, `invalid_input` y
-`configuration_error`. `unconfirmed` en Slack requiere comprobar la entrega.
+El DAG usa tres `BashOperator` con comandos visibles y un
+`BedrockInvokeAgentRuntimeOperator`. El agente valida el incidente, responde
+`{"status": "accepted", "incident": {...}}` y sigue investigando en un hilo separado.
+El SDK registra el trabajo con `add_async_task` y mantiene `/ping` en `HealthyBusy`
+hasta que el triage termina; `complete_async_task` libera ese estado en un `finally`.
 
-El operador devuelve este JSON dentro de la clave `response`, junto con metadatos
-del Runtime. Con XCom habilitado, una tarea posterior puede leer
-`ti.xcom_pull(task_ids="investigate_failure")["response"]`. Esa tarea debe revisar
-`status`: una respuesta HTTP exitosa no convierte un diagnóstico incompleto en
-éxito ni corrige el estado de la tarea original. Ver el
-[contrato del operador](https://airflow.apache.org/docs/apache-airflow-providers-amazon/stable/operators/bedrock.html).
-El cableado del DAG y el tratamiento de esos estados quedan para la siguiente etapa.
+El DAG espera sólo la recepción HTTP, no el diagnóstico. No hay `check_result`,
+XCom de la investigación ni reintentos automáticos de esa invocación. `load` queda
+`upstream_failed` si falla `transform`, por lo que el DAG termina fallado incluso
+si el incidente fue aceptado. En esta demo se investiga la falla de `transform`.
+
+El agente se ocupa de leer logs, revisar código, abrir una draft PR y notificar
+por Slack. El resultado completo queda en los logs de AgentCore; la PR y Slack
+son las salidas para la persona. Los estados internos y las acciones confirmadas
+siguen registrándose, pero ya no condicionan el resultado del DAG.
+
+Esta recepción asíncrona no es una cola durable: si el proceso del agente se
+pierde, el trabajo en memoria puede perderse. `accepted` confirma recepción,
+no recuperación ni entrega garantizada. No se habilita merge ni rerun automático.
+
+Antes de ejecutar el DAG, configurar en Airflow las Variables
+`agentcore_runtime_arn` y `mwaa_environment_name` con los outputs de Terraform.
+Se resuelven al ejecutar la tarea, no al importar el DAG. El operador usa el rol
+IAM de MWAA (`aws_conn_id=None`), endpoint `workshop` y un timeout de lectura de
+120 segundos para el arranque y la recepción, independiente del límite de triage.
+
+Para validar el DAG con Airflow 3.3.1 y provider Amazon 9.34.0, ejecutar
+`python -m unittest discover -s tests/dags -v` en un contenedor con esas dependencias.
+
+[Procesamiento asíncrono en AgentCore](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-long-run.html)
 
 ## Próximos pasos
 
 1. Desplegar la infraestructura definida en [infra/README.md](infra/README.md) y completar los secretos.
-2. Conectar el manejo de fallos del DAG al operador de AgentCore, ajustando su
-   `read_timeout` por encima del presupuesto del agente y el tiempo de peticiones en curso.
+2. Configurar las Variables de Airflow y ejecutar el DAG para validar la investigación real.
 3. Completar el despliegue y comprobar la recuperación después del merge.
 
 Pendiente validar versión de MWAA y provider Amazon, IAM, conectividad y secretos.
-No se ha desplegado infraestructura ni probado el flujo de punta a punta.
+El flujo completo de punta a punta todavía requiere validación sobre AWS.
