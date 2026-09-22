@@ -1,7 +1,15 @@
 # Configurar Slack y GitHub
 
 Cargar los valores directamente en AWS Secrets Manager, región `us-east-1`,
-en los secretos creados por Terraform. No guardarlos en Git, `.env` ni en el chat.
+en los secretos persistentes `${project}/github` y `${project}/slack`.
+Para el nombre de proyecto por defecto son `nerdearla-agentic-airflow/github` y
+`nerdearla-agentic-airflow/slack`. No guardarlos en Git, `.env` ni en el chat.
+
+Si no existen todavía, en Secrets Manager elegir **Store a new secret → Other type
+of secret**, cargar el JSON correspondiente y guardar con el nombre indicado, usando
+la clave de cifrado predeterminada de Secrets Manager. Crear ambos antes del primer
+`terraform apply`. Si ya están cargados, no hay nada que repetir: el destroy de la POC
+los conserva. Terraform sólo lee metadatos y no administra sus valores.
 
 ## Slack
 

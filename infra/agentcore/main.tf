@@ -51,7 +51,7 @@ resource "aws_bedrockagentcore_agent_runtime" "agent" {
   role_arn           = aws_iam_role.agent.arn
   agent_runtime_artifact {
     container_configuration {
-      container_uri = "${var.repository_url}:${var.agent_image_tag}"
+      container_uri = var.image_uri
     }
   }
   network_configuration {

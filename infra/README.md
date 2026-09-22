@@ -15,7 +15,7 @@ infra/
   athena/           # Workgroup y ubicación del reporte
   glue/             # Job Spark, script, rol y logs
   ecr/              # Repositorio de imágenes
-  secrets-manager/  # Secretos vacíos de GitHub y Slack
+  secrets-manager/  # Referencias a credenciales persistentes y Variables de Airflow
   kms/              # Clave de cifrado compartida
   main.tf           # Provider y conexión entre módulos
   outputs.tf
@@ -27,7 +27,7 @@ infra/
 Cada módulo contiene `main.tf`, `variables.tf` y `outputs.tf`. Se ejecuta
 Terraform desde `infra/`, no dentro de cada servicio.
 Los roles IAM y los logs pertenecen al módulo del servicio que los usa.
-Docker se usa para construir la imagen del agente; Terraform se ejecuta directamente.
+Terraform se ejecuta directamente e invoca Docker para construir la imagen del agente.
 
 MWAA y AgentCore usan subnets privadas con salida por NAT. La UI de MWAA es
 pública con autenticación AWS; AgentCore requiere IAM. El agente tiene acceso
@@ -91,84 +91,45 @@ Los valores de GitHub y Slack nunca se cargan mediante Terraform ni entran al st
 
 ## Desplegar
 
-Los `apply` crean recursos facturables,
-incluyendo MWAA y NAT mientras estén activos.
+Requisitos locales: Terraform, AWS CLI v2 autenticado y Docker con Buildx funcionando.
+Si usás un perfil distinto de `default`, seleccionarlo con `AWS_PROFILE` en la
+terminal. El provider y el build de Docker usan esas mismas credenciales.
 
-1. Tener el AWS CLI autenticado y revisar los parámetros de `infra/config.yaml`:
-región, zonas y `github_repo` (este repositorio por defecto). El repo de GitHub debe contener el DAG en `main`.
-No hace falta crear configuración local adicional. Si usás un perfil distinto de
-`default`, seleccionarlo con `AWS_PROFILE` en la terminal.
+Una sola vez, crear y cargar los secretos `${project}/github` y `${project}/slack`
+en Secrets Manager, en la región de `config.yaml`. Seguir la [guía de integraciones](integrations.md).
+Son persistentes: Terraform sólo consulta sus ARNs, nunca lee sus valores ni los
+borra. Si todavía no existen, el plan informa que faltan.
 
-2. Crear la infraestructura inicial. Sin `agent_image_tag`, se crean ECR, MWAA y
-sus dependencias; el Runtime queda pendiente hasta publicar la imagen:
-
-```bash
-terraform plan -out=workshop.tfplan
-terraform apply workshop.tfplan
-```
-
-Terraform sube el DAG y los requisitos a S3 y pasa el VersionId de los requisitos a MWAA.
-Un cambio local en esos archivos se publica con el próximo `apply`: el DAG se
-actualiza en la misma clave de S3 y MWAA lo sincroniza automáticamente.
-
-3. Construir y publicar la imagen ARM64. Usar un tag nuevo en cada actualización
-y la misma región que en `config.yaml` (el ejemplo usa `us-east-1`):
+Revisar `config.yaml`, especialmente región, zonas y repositorio de GitHub.
+Desde `infra/`, después de `terraform init` en un checkout nuevo:
 
 ```bash
-AGENT_REPOSITORY="$(terraform output -raw repository_url)"
-AGENT_TAG=v1
-aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "${AGENT_REPOSITORY%%/*}"
-docker buildx build --platform linux/arm64 --provenance=false --push \
-  -f ../airflow-agent/container/Dockerfile \
-  -t "$AGENT_REPOSITORY:$AGENT_TAG" ../airflow-agent
+terraform apply
 ```
 
-4. Copiar `infra/terraform.tfvars.example` a `infra/terraform.tfvars` y dejar
-`agent_image_tag = "v1"` (o el tag publicado). Mantener ese archivo para los
-siguientes planes: quitar el tag vuelve a deshabilitar el Runtime y propone
-eliminarlo. El archivo contiene configuración, nunca tokens.
+El despliegue crea ECR, construye y publica la imagen ARM64 y crea AgentCore después
+del push. El tag se calcula a partir del código, configuración, Dockerfile y
+requirements del agente. No hay que editar tags, crear tfvars ni hacer dos applies.
+Un cambio en esos archivos reconstruye la imagen; un cambio sólo en el DAG no.
+El build corre localmente mediante `ecr/build.sh`, invocado por Terraform.
+Si el push ya terminó en un intento anterior, el script reutiliza ese tag inmutable.
 
-```bash
-cp terraform.tfvars.example terraform.tfvars
-terraform plan -out=workshop.tfplan
-terraform apply workshop.tfplan
-terraform output
-```
+Terraform también crea los buckets, carga el CSV, el script Glue, el DAG y los
+requisitos de Airflow; crea el job Glue, su catálogo y el workgroup Athena.
+Un cambio del DAG actualiza el mismo objeto en S3 y MWAA lo sincroniza.
 
-Terraform configura el Runtime con el tag indicado; no ejecuta el build de Docker.
-Si cambia el código del agente, repetir el build/push con un tag nuevo y actualizar
-`agent_image_tag` antes del siguiente `terraform apply`. Si sólo cambia el DAG,
-alcanza con `terraform apply`: no hace falta reconstruir la imagen.
+Las Variables `mwaa_environment_name`, `agentcore_runtime_arn`, `sales_input_bucket`,
+`sales_glue_job`, `sales_database` y `sales_athena_workgroup` se crean automáticamente
+en Secrets Manager bajo `${project}/airflow/variables/`. Airflow las consulta a través
+del backend configurado; no hay que cargarlas en la UI y no aparecen en su listado.
+Estas referencias de infraestructura sí entran al state y se eliminan con el entorno.
 
-5. Seguir el [paso a paso de Slack y GitHub](integrations.md) y cargar los valores
-de los secretos desde la consola de Secrets Manager:
-
-| Secreto | Contenido JSON |
-| --- | --- |
-| `nerdearla-agentic-airflow/github` | `{"token": "..."}` |
-| `nerdearla-agentic-airflow/slack` | `{"webhook_url": "..."}` |
-
-El token de GitHub necesita Contents y Pull requests con escritura en este repo.
-El Runtime puede crearse con secretos vacíos; esas tools funcionarán después de
-completarlos. Para Slack se usa un Incoming Webhook.
-
-Terraform crea `mwaa_environment_name`, `sales_input_bucket`, `sales_glue_job`, `sales_database`, `sales_athena_workgroup` y, al habilitar el Runtime,
-`agentcore_runtime_arn` bajo `${project}/airflow/variables/` en Secrets Manager.
-También configura el backend de Airflow y el permiso de lectura del rol de MWAA;
-no hay que cargar Variables en la UI. Son referencias de infraestructura, sin tokens,
-y sus valores sí quedan en el state. Los secretos de GitHub y Slack siguen cargándose
-por separado y MWAA no tiene acceso a ellos.
-Las Variables del backend se consultan al ejecutar la tarea y no aparecen en el
-listado de Variables de la UI. El operador usa el endpoint `workshop` con
-`invoke_agent_runtime_kwargs={"qualifier": "workshop"}`. La rama
-`investigate_failure` invoca el agente cuando falla `wait_for_sales`. Después de
-actualizar el DAG local, ejecutar `terraform apply` para publicarlo en S3.
+Al finalizar, comprobar MWAA `AVAILABLE`, Runtime y endpoint `READY`, y ejecutar
+manualmente el DAG para probar el incidente. El procesamiento se bloquea por los
+permisos omitidos intencionalmente; un apply exitoso no equivale a una prueba end-to-end.
+El operador invoca el endpoint `workshop` y el agente continúa el triage en segundo plano.
 
 [Backend Secrets Manager para MWAA](https://docs.aws.amazon.com/mwaa/latest/userguide/connections-secrets-manager.html)
-
-Antes de la demo, comprobar MWAA `AVAILABLE`, Runtime y endpoint `READY`, la
-instalación de los requisitos y una investigación completa. La validación local
-y el plan no comprueban permisos efectivos, conectividad ni que la imagen arranque.
 
 ## Incidente de permisos
 
@@ -201,7 +162,8 @@ terraform destroy
 El comando solicita confirmación y elimina los recursos administrados por este
 state: MWAA, AgentCore, red (incluyendo NAT y EIP), roles, logs, bucket y repositorio.
 S3 usa `force_destroy` para borrar objetos y versiones; ECR usa `force_delete` para
-borrar las imágenes. Los secretos se eliminan sin período de recuperación.
+borrar las imágenes. Las Variables de Airflow se eliminan sin período de recuperación;
+los secretos de GitHub y Slack quedan intactos y se reutilizan en el siguiente apply.
 La clave KMS queda pendiente de eliminación durante siete días, el mínimo de AWS;
 no desaparece inmediatamente. El borrado de los servicios puede ser asíncrono.
 
@@ -211,6 +173,14 @@ registrarlos en el state. No se ha probado todavía un ciclo real de apply/destr
 No borra el repositorio GitHub, las PRs, mensajes o webhooks de Slack ni los tokens
 emitidos en GitHub. Tampoco administra recursos creados fuera de este state,
 como roles vinculados a servicios que AWS pueda crear automáticamente.
+
+Para instalaciones anteriores, el bloque `removed` de `secrets-manager/main.tf`
+retira del state los dos secretos de integración sin eliminarlos. Aplicar esa migración
+antes de destruir y revisar el plan: debe indicar que dejan de administrarse, nunca
+que se destruyen. Las instalaciones nuevas sólo consultan los secretos existentes.
+
+Mañana, con las credenciales vigentes y Docker funcionando, alcanza con
+`terraform apply`: reconstruye/publica la imagen y reutiliza los secretos conservados.
 
 ## Referencias
 

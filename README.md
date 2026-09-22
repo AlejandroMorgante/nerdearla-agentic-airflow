@@ -23,7 +23,7 @@ infra/
   glue/             # Job de ventas, script e IAM
   s3/               # DAGs y artefactos
   ecr/              # Imágenes del agente
-  secrets-manager/  # Credenciales de integraciones
+  secrets-manager/  # Credenciales persistentes y Variables de Airflow
   kms/              # Cifrado
   main.tf           # Conecta los módulos por servicio
   README.md         # Guía de despliegue
@@ -61,6 +61,12 @@ Puede proponer el fix en `infra/mwaa/sales-access.tf`, distinguiendo el error
 observado de los permisos faltantes en Glue, que todavía no se ejecutó.
 No aplica la PR: merge, `terraform apply` y una nueva ejecución quedan a cargo
 de la persona. Corregir sólo S3 expone después el permiso faltante de Glue.
+
+Para desplegar la POC, cargar una vez los secretos de GitHub y Slack, tener
+AWS CLI autenticado y Docker funcionando, y ejecutar `terraform apply` desde
+`infra/` (con `terraform init` la primera vez). El build y push de la imagen,
+las Variables y la publicación del DAG están automatizados. `terraform destroy`
+conserva los dos secretos de integración para reutilizarlos mañana.
 
 ## Construir el contenedor
 
@@ -114,7 +120,7 @@ La infraestructura pasará estas variables **no secretas** al Runtime:
 | `SLACK_SECRET_ID` | Nombre o ARN del secreto de Slack |
 | `ENABLE_DAG_RERUN` | Default `false`; habilitar sólo para la fase de recuperación |
 
-Crear más adelante los secretos como JSON en Secrets Manager:
+Crear una sola vez los secretos como JSON en Secrets Manager antes del primer apply:
 
 ```json
 {"token": "<token de GitHub>"}

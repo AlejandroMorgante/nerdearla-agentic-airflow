@@ -6,12 +6,12 @@ variable "config" {
 locals {
   config      = var.config
   project     = var.config.project
-  agent_count = var.agent_image_tag == null ? 0 : 1
+  agent_count = 1
 }
 
 variable "repository_arn" { type = string }
 
-variable "repository_url" { type = string }
+variable "image_uri" { type = string }
 
 variable "secret_arns" { type = map(string) }
 
@@ -31,7 +31,6 @@ variable "vpc_id" { type = string }
 
 variable "model_id" { type = string }
 
-variable "agent_image_tag" { type = string }
 
 variable "sales_input_bucket" { type = string }
 
