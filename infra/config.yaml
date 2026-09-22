@@ -1,0 +1,11 @@
+project: nerdearla-agentic-airflow
+region: us-east-1
+# Ejemplo público: verificar las zonas soportadas en tu cuenta antes de desplegar.
+availability_zones: [us-east-1a, us-east-1b]
+airflow_version: "3.3.1"
+mwaa_class: mw1.small
+runtime_name: nerdearla_airflow_agent
+dag_id: demo_pipeline
+github_base_branch: main
+github_repo: AlejandroMorgante/nerdearla-agentic-airflow
+github_dag_path: dags/demo_pipeline.py

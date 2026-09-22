@@ -1,0 +1,2 @@
+# Copiar a terraform.tfvars después de publicar esta imagen en ECR.
+agent_image_tag = "v1"
