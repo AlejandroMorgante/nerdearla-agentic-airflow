@@ -58,12 +58,47 @@ class AgentTest(unittest.IsolatedAsyncioTestCase):
             "AIRFLOW_DAG_ID": "demo_pipeline", "GITHUB_REPO": "demo/workshop"}, clear=True)
         self.env.start()
         self.addCleanup(self.env.stop)
+        self.mcp_patch = patch.object(agent, "MCPClient")
+        self.mcp = self.mcp_patch.start()
+        self.mcp.return_value.__enter__.return_value.list_tools_sync.return_value = []
+        self.addCleanup(self.mcp_patch.stop)
 
     async def invoke_model(self, model, tools=None, config=None):
         with patch.object(agent, "BedrockModel", return_value=model), \
                 patch.object(agent, "get_tools", return_value=tools or []), \
                 patch.object(agent, "load_config", return_value=config or agent.load_config()):
             return await agent.investigate(copy.deepcopy(EVENT))
+
+    async def test_mcp_tool_is_available_during_triage_and_connection_is_closed(self):
+        @tool
+        def aws___search_documentation(search_phrase: str) -> dict:
+            """Busca documentación simulada."""
+            self.mcp.return_value.__exit__.assert_not_called()
+            return {"url": "https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html"}
+
+        self.mcp.return_value.__enter__.return_value.list_tools_sync.return_value = [aws___search_documentation]
+        result = await self.invoke_model(ScriptedModel([
+            [("aws___search_documentation", {"search_phrase": "S3 HeadObject required permissions"})],
+            "HeadObject requiere s3:GetObject.",
+        ]))
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["tool_calls"], 1)
+        self.assertEqual(result["actions"], [{"tool": "aws___search_documentation", "status": "success"}])
+        self.mcp.return_value.__exit__.assert_called_once()
+
+    async def test_mcp_failure_does_not_prevent_triage(self):
+        for stage in ("connect", "list"):
+            with self.subTest(stage=stage):
+                self.mcp.return_value.__enter__.side_effect = None
+                self.mcp.return_value.__enter__.return_value.list_tools_sync.side_effect = None
+                if stage == "connect":
+                    self.mcp.return_value.__enter__.side_effect = RuntimeError("private-value")
+                else:
+                    self.mcp.return_value.__enter__.return_value.list_tools_sync.side_effect = RuntimeError("private-value")
+                with patch.object(agent.app.logger, "warning") as log:
+                    result = await self.invoke_model(ScriptedModel(["Diagnóstico con evidencia local."]))
+                self.assertEqual(result["status"], "completed")
+                self.assertNotIn("private-value", str(log.call_args))
 
     async def test_invalid_payload_and_wrong_environment_do_not_invoke_model(self):
         with patch.object(agent, "BedrockModel") as model:

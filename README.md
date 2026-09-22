@@ -3,6 +3,9 @@
 Un pipeline falla por permisos y un agente investiga el incidente, propone un fix
 mediante una draft PR en GitHub y avisa por Slack. Airflow corre en Amazon MWAA;
 el agente usa Strands y Claude Sonnet 4.6 en Amazon Bedrock AgentCore.
+Consulta [AWS Knowledge MCP](https://awslabs.github.io/mcp/servers/aws-knowledge-mcp-server)
+para respaldar el diagnóstico con documentación actualizada de AWS. Es un servicio
+remoto: no requiere despliegue ni credenciales adicionales.
 
 **Una POC con pocos pasos manuales:** `terraform apply` levanta el entorno y
 `terraform destroy` lo elimina. Los secretos de GitHub y Slack se conservan para
@@ -64,6 +67,7 @@ S3KeySensor → GlueJobOperator → AthenaOperator
     │ falla por falta de s3:GetObject
     └─ BedrockInvokeAgentRuntimeOperator → AgentCore
                                              ├─ consulta Airflow, logs, S3 e IAM
+                                             ├─ consulta documentación con AWS Knowledge MCP
                                              ├─ propone una draft PR en GitHub
                                              └─ notifica por Slack
 ```
