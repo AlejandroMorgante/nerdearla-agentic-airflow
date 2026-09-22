@@ -85,7 +85,9 @@ terraform test
 
 Terraform usa la cadena habitual de credenciales de AWS, incluido `AWS_PROFILE`
 o el perfil `default`. El state queda en `infra/terraform.tfstate`, ignorado por Git: conservarlo
-para actualizar o eliminar los recursos. Para este workshop se usa state local;
+para actualizar o eliminar los recursos. Sus backups históricos locales se conservan
+en `.state-backups/`. Los planes guardados son temporales y no se necesitan
+para ejecutar `terraform apply`. Para este workshop se usa state local;
 si varias personas despliegan, configurar antes un backend remoto con locking.
 Los valores de GitHub y Slack nunca se cargan mediante Terraform ni entran al state.
 
@@ -96,7 +98,7 @@ Si usás un perfil distinto de `default`, seleccionarlo con `AWS_PROFILE` en la
 terminal. El provider y el build de Docker usan esas mismas credenciales.
 
 Una sola vez, crear y cargar los secretos `${project}/github` y `${project}/slack`
-en Secrets Manager, en la región de `config.yaml`. Seguir la [guía de integraciones](integrations.md).
+en Secrets Manager, en la región de `config.yaml`. Seguir la [guía de integraciones](secrets-manager/README.md).
 Son persistentes: Terraform sólo consulta sus ARNs, nunca lee sus valores ni los
 borra. Si todavía no existen, el plan informa que faltan.
 
