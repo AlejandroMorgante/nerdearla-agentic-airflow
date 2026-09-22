@@ -132,7 +132,8 @@ terraform apply workshop.tfplan
 terraform output
 ```
 
-5. Cargar los valores de los secretos desde la consola de Secrets Manager:
+5. Seguir el [paso a paso de Slack y GitHub](integrations.md) y cargar los valores
+de los secretos desde la consola de Secrets Manager:
 
 | Secreto | Contenido JSON |
 | --- | --- |
@@ -154,12 +155,25 @@ y el plan no comprueban permisos efectivos, conectividad ni que la imagen arranq
 
 ## Limpieza
 
-S3, ECR, los secretos y KMS tienen `prevent_destroy`: un `destroy` completo se
-bloquea para evitar perder código, imágenes y credenciales por accidente.
-Para borrar todo al terminar, retirar conscientemente esas protecciones,
-vaciar las versiones del bucket y las imágenes de ECR, y revisar un
-`plan -destroy` antes de aplicarlo. Secrets Manager y KMS mantienen sus períodos
-de recuperación de 7 y 30 días. Conservar el state hasta completar la limpieza.
+Esta infraestructura es descartable. Desde `infra/`, con el mismo perfil y state:
+
+```bash
+terraform destroy
+```
+
+El comando solicita confirmación y elimina los recursos administrados por este
+state: MWAA, AgentCore, red (incluyendo NAT y EIP), roles, logs, bucket y repositorio.
+S3 usa `force_destroy` para borrar objetos y versiones; ECR usa `force_delete` para
+borrar las imágenes. Los secretos se eliminan sin período de recuperación.
+La clave KMS queda pendiente de eliminación durante siete días, el mínimo de AWS;
+no desaparece inmediatamente. El borrado de los servicios puede ser asíncrono.
+
+Conservar el state y revisar que `destroy` termine sin errores. Si los recursos ya
+existían antes de incorporar estos flags, ejecutar primero `terraform apply` para
+registrarlos en el state. No se ha probado todavía un ciclo real de apply/destroy.
+No borra el repositorio GitHub, las PRs, mensajes o webhooks de Slack ni los tokens
+emitidos en GitHub. Tampoco administra recursos creados fuera de este state,
+como roles vinculados a servicios que AWS pueda crear automáticamente.
 
 ## Referencias
 
@@ -167,3 +181,5 @@ de recuperación de 7 y 30 días. Conservar el state hasta completar la limpieza
 - [Provider AWS: entrega de logs](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_delivery_source)
 - [Versiones de MWAA](https://docs.aws.amazon.com/mwaa/latest/userguide/airflow-versions.html)
 - [Constraints de Airflow 3.3.1](https://raw.githubusercontent.com/apache/airflow/constraints-3.3.1/constraints-3.12.txt)
+
+- [Eliminación de claves KMS](https://docs.aws.amazon.com/kms/latest/developerguide/deleting-keys.html)

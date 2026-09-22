@@ -1,7 +1,7 @@
 resource "aws_kms_key" "workshop" {
   description             = "Cifrado de MWAA y logs del workshop"
   enable_key_rotation     = true
-  deletion_window_in_days = 30
+  deletion_window_in_days = 7
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -16,5 +16,4 @@ resource "aws_kms_key" "workshop" {
       }
     ]
   })
-  lifecycle { prevent_destroy = true }
 }

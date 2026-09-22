@@ -1,8 +1,8 @@
 resource "aws_ecr_repository" "agent" {
+  force_delete         = true
   name                 = "${local.project}/agent"
   image_tag_mutability = "IMMUTABLE"
   image_scanning_configuration { scan_on_push = true }
-  lifecycle { prevent_destroy = true }
 }
 
 resource "aws_ecr_lifecycle_policy" "agent" {

@@ -1,6 +1,7 @@
 resource "aws_s3_bucket" "artifacts" {
-  bucket = "${local.project}-${local.config.account}-${local.config.region}"
-  lifecycle { prevent_destroy = true }
+  # Workshop descartable: destroy elimina también objetos y versiones.
+  force_destroy = true
+  bucket        = "${local.project}-${local.config.account}-${local.config.region}"
 }
 
 resource "aws_s3_bucket_versioning" "artifacts" {
