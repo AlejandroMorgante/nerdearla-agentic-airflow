@@ -27,6 +27,12 @@ resource "aws_iam_role_policy" "agent" {
       "arn:aws:bedrock:*::foundation-model/${trimprefix(var.model_id, "us.")}"
     ] },
     { Effect = "Allow", Action = ["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"], Resource = "${aws_cloudwatch_log_group.agent.arn}:*" },
+    { Effect = "Allow", Action = ["logs:CreateLogGroup", "logs:DescribeLogStreams", "logs:CreateLogStream", "logs:PutLogEvents"],
+      Resource = [
+        "arn:aws:logs:${local.config.region}:${local.config.account}:log-group:/aws/bedrock-agentcore/runtimes/${local.config.runtime_name}-*-workshop",
+        "arn:aws:logs:${local.config.region}:${local.config.account}:log-group:/aws/bedrock-agentcore/runtimes/${local.config.runtime_name}-*-workshop:*"
+      ]
+    },
     { Effect = "Allow", Action = "logs:DescribeLogGroups", Resource = "*" },
     { Effect = "Allow", Action = "cloudwatch:PutMetricData", Resource = "*", Condition = { StringEquals = { "cloudwatch:namespace" = "bedrock-agentcore" } } },
     { Effect = "Allow", Action = ["xray:PutTraceSegments", "xray:PutTelemetryRecords", "xray:GetSamplingRules", "xray:GetSamplingTargets"], Resource = "*" },
@@ -78,6 +84,7 @@ resource "aws_bedrockagentcore_agent_runtime_endpoint" "workshop" {
   name                  = "workshop"
   agent_runtime_id      = aws_bedrockagentcore_agent_runtime.agent[0].agent_runtime_id
   agent_runtime_version = aws_bedrockagentcore_agent_runtime.agent[0].agent_runtime_version
+  depends_on            = [aws_cloudwatch_log_group.runtime]
 }
 
 resource "aws_iam_role_policy" "mwaa_invoke_agent" {
@@ -92,6 +99,15 @@ resource "aws_iam_role_policy" "mwaa_invoke_agent" {
 
 resource "aws_cloudwatch_log_group" "agent" {
   name              = "/aws/bedrock-agentcore/${local.project}"
+  retention_in_days = 7
+  kms_key_id        = var.kms_key_arn
+}
+
+# stdout/stderr del contenedor: el resultado del triage asíncrono queda aquí.
+# APPLICATION_LOGS registra la invocación, no reemplaza estos logs.
+resource "aws_cloudwatch_log_group" "runtime" {
+  count             = local.agent_count
+  name              = "/aws/bedrock-agentcore/runtimes/${aws_bedrockagentcore_agent_runtime.agent[0].agent_runtime_id}-workshop"
   retention_in_days = 7
   kms_key_id        = var.kms_key_arn
 }

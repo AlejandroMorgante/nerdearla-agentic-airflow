@@ -104,5 +104,6 @@ en GitHub y Slack. Podés levantar la POC nuevamente con `terraform apply`.
   [configuración](airflow-agent/config.yaml): modelo, instrucciones y límites.
 - [Infraestructura](infra/README.md): módulos por servicio y detalles operativos.
 
-El flujo completo DAG → agente → PR → Slack todavía está pendiente de validación
-end-to-end en AWS.
+Flujo validado end-to-end en AWS el 22/09/2026: fallo S3, invocación del agente,
+[draft PR con el fix](https://github.com/AlejandroMorgante/nerdearla-agentic-airflow/pull/1)
+y diagnóstico recibido en Slack. El DAG conservó su estado fallido.

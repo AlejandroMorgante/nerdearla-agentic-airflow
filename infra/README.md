@@ -35,7 +35,9 @@ Manager, y tiene salida HTTPS para GitHub y Slack.
 
 La UI de MWAA es pública con autenticación AWS. El agente tiene acceso Viewer
 a Airflow y la reejecución está deshabilitada. Los logs de MWAA y AgentCore están
-cifrados con KMS y se conservan siete días. Un NAT simplifica la POC, sin alta
+cifrados con KMS y se conservan siete días. El resultado del triage asíncrono
+queda en `/aws/bedrock-agentcore/runtimes/<runtime-id>-workshop`; este grupo
+también lo administra Terraform. Un NAT simplifica la POC, sin alta
 disponibilidad. El plan y el apply usan la cuenta del perfil activo del AWS CLI.
 
 ## Módulos y despliegues independientes
@@ -170,11 +172,8 @@ no desaparece inmediatamente. El borrado de los servicios puede ser asíncrono.
 
 Conservar el state y revisar que `destroy` termine sin errores. Si los recursos ya
 existían antes de incorporar estos flags, ejecutar primero `terraform apply` para
-registrarlos en el state. El apply real se verificó; la primera limpieza encontró interfaces del despliegue
-anterior de AgentCore en VPC que AWS puede retener hasta ocho horas. El modo PUBLIC
-actual evita crear esas interfaces en próximos despliegues. Si quedó state pendiente,
-completar `terraform destroy` cuando AWS libere las interfaces antes de recrear.
-[Retención de interfaces de AgentCore](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agentcore-vpc.html).
+registrarlos en el state. El despliegue anterior se eliminó por completo, conservando
+los secretos y el período de eliminación de KMS. AgentCore usa ahora modo PUBLIC.
 No borra el repositorio GitHub, las PRs, mensajes o webhooks de Slack ni los tokens
 emitidos en GitHub. Tampoco administra recursos creados fuera de este state,
 como roles vinculados a servicios que AWS pueda crear automáticamente.
@@ -184,7 +183,7 @@ retira del state los dos secretos de integración sin eliminarlos. Aplicar esa m
 antes de destruir y revisar el plan: debe indicar que dejan de administrarse, nunca
 que se destruyen. Las instalaciones nuevas sólo consultan los secretos existentes.
 
-Mañana, con las credenciales vigentes y Docker funcionando, alcanza con
+Para volver a desplegar, con las credenciales vigentes y Docker funcionando, alcanza con
 `terraform apply`: reconstruye/publica la imagen y reutiliza los secretos conservados.
 
 ## Referencias

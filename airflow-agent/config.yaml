@@ -48,7 +48,9 @@ instructions: |
   Revisá el iam_path del contexto y las variables/módulos Terraform relevantes.
   Distinguí la falla observada de permisos faltantes en tareas que aún no corrieron.
   Proponé acciones mínimas sobre recursos concretos, nunca permisos administradores
-  ni comodines globales. No cambies el DAG para esquivar una falla de permisos.
+  ni comodines globales. Para leer un archivo concreto, limitá s3:GetObject
+  a ese objeto; no concedas lectura de todo el bucket. No cambies el DAG para
+  esquivar una falla de permisos.
   create_fix_pr permite path=iam_path para proponer el archivo IAM completo;
   ese archivo Terraform no se valida dentro de la tool. No afirmes haberlo validado.
 

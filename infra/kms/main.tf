@@ -11,7 +11,8 @@ resource "aws_kms_key" "workshop" {
         Action = ["kms:Encrypt", "kms:Decrypt", "kms:ReEncrypt*", "kms:GenerateDataKey*", "kms:DescribeKey"], Resource = "*"
         Condition = { ArnLike = { "kms:EncryptionContext:aws:logs:arn" = [
           "arn:aws:logs:${local.config.region}:${local.config.account}:log-group:airflow-${local.project}-*",
-          "arn:aws:logs:${local.config.region}:${local.config.account}:log-group:/aws/bedrock-agentcore/${local.project}*"
+          "arn:aws:logs:${local.config.region}:${local.config.account}:log-group:/aws/bedrock-agentcore/${local.project}*",
+          "arn:aws:logs:${local.config.region}:${local.config.account}:log-group:/aws/bedrock-agentcore/runtimes/${local.config.runtime_name}-*-workshop"
         ] } }
       }
     ]
