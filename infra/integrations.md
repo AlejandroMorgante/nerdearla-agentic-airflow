@@ -6,7 +6,7 @@ en los secretos creados por Terraform. No guardarlos en Git, `.env` ni en el cha
 ## Slack
 
 1. Abrir [Slack Apps](https://api.slack.com/apps).
-2. Seleccionar **Create New App → From scratch**.
+2. Seleccionar **Create New App → Blank app → Continue**.
 3. Nombrarla `Nerdearla Airflow Agent` y elegir el workspace.
 4. En **Incoming Webhooks**, activar **Activate Incoming Webhooks**.
 5. Seleccionar **Add New Webhook to Workspace**, elegir el canal de la demo

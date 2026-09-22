@@ -16,7 +16,7 @@ resource "aws_iam_role" "mwaa" {
 resource "aws_iam_role_policy" "mwaa" {
   role = aws_iam_role.mwaa.id
   policy = jsonencode({ Version = "2012-10-17", Statement = [
-    { Effect = "Allow", Action = ["s3:ListBucket", "s3:GetBucketLocation", "s3:GetObject*"], Resource = [var.bucket_arn, "${var.bucket_arn}/*"] },
+    { Effect = "Allow", Action = ["s3:ListBucket", "s3:GetBucketLocation", "s3:GetBucketPublicAccessBlock", "s3:GetObject*"], Resource = [var.bucket_arn, "${var.bucket_arn}/*"] },
     { Effect = "Allow", Action = ["kms:Encrypt", "kms:Decrypt", "kms:ReEncrypt*", "kms:GenerateDataKey*", "kms:DescribeKey"], Resource = var.kms_key_arn },
     { Effect = "Allow", Action = "airflow:PublishMetrics", Resource = "arn:aws:airflow:${local.config.region}:${local.config.account}:environment/${local.project}" },
     { Effect = "Allow", Action = ["logs:CreateLogStream", "logs:CreateLogGroup", "logs:PutLogEvents", "logs:GetLogEvents", "logs:GetLogRecord", "logs:GetLogGroupFields", "logs:GetQueryResults", "logs:DescribeLogStreams"], Resource = "arn:aws:logs:${local.config.region}:${local.config.account}:log-group:airflow-${local.project}-*" },
