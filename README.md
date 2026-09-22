@@ -1,248 +1,104 @@
-# Agentic Airflow — workshop
+# Agentic Airflow — POC
 
-Demo de un pipeline en Amazon MWAA que, al fallar, invoca un agente en
-Amazon Bedrock AgentCore para investigar, proponer una corrección y comunicarla.
+Un pipeline falla por permisos y un agente investiga el incidente, propone un fix
+mediante una draft PR en GitHub y avisa por Slack. Airflow corre en Amazon MWAA;
+el agente usa Strands y Claude Sonnet 4.6 en Amazon Bedrock AgentCore.
 
-## Estructura
+**Una POC con pocos pasos manuales:** `terraform apply` levanta el entorno y
+`terraform destroy` lo elimina. Los secretos de GitHub y Slack se conservan para
+reutilizarlos; la clave KMS queda programada para borrarse a los siete días.
 
-```text
-airflow-agent/
-  agent.py          # Entrada HTTP de AgentCore
-  config.yaml       # Modelo, instrucciones y límites
-  tools.py          # Herramientas de investigación y acción
-  container/
-    Dockerfile
-    requirements.txt
-dags/
-  demo_pipeline.py  # ETL con una falla intencional
-infra/
-  agentcore/        # Runtime, endpoint, permisos y logs
-  mwaa/             # Airflow, permisos, logs y requisitos
-  vpc/              # Red del workshop
-  s3/               # DAGs y artefactos
-  ecr/              # Imágenes del agente
-  secrets-manager/  # Credenciales persistentes y Variables de Airflow
-  kms/              # Cifrado
-  main.tf           # Conecta los módulos por servicio
-  README.md         # Guía de despliegue
-README.md
-```
+## Arranque rápido
 
-## Estado actual
+La idea es dedicar unos cinco minutos a los pasos de despliegue **una vez listos
+los requisitos y las integraciones**. El aprovisionamiento de MWAA tarda más.
 
-El agente valida el incidente e inicia una instancia nueva de Strands con
-`get_tools()` por invocación. Usa Claude Sonnet 4.6 en Bedrock. El modelo respondió
-correctamente a una prueba mínima con credenciales locales de desarrollo en `us-east-1`.
-Ese profile no se copia a la imagen: AgentCore usará su propio rol IAM.
-No se necesitan credenciales para importar el módulo ni ejecutar tests.
+Necesitás Terraform 1.14 o superior (menor que 2.0), AWS CLI v2 autenticado con
+permisos para crear la infraestructura, Docker con Buildx funcionando y acceso
+al modelo Claude Sonnet 4.6 en Bedrock.
 
-El DAG usa operadores nativos de AWS, sin decorators:
+1. Cloná este repo o tu fork y revisá [infra/config.yaml](infra/config.yaml):
+   región, zonas y repositorio donde el agente abrirá las PRs.
+2. Creá y cargá una sola vez estos secretos en Secrets Manager, en la región
+   configurada. Si ya existen, reutilizalos:
 
-```text
-wait_for_sales (S3KeySensor) → process_sales (GlueJobOperator) → summarize_sales (AthenaOperator)
-       └─ si falla → investigate_failure → AgentCore
-```
+   | Nombre por defecto | Valor JSON |
+   | --- | --- |
+   | `nerdearla-agentic-airflow/github` | `{"token": "<token de GitHub>"}` |
+   | `nerdearla-agentic-airflow/slack` | `{"webhook_url": "<webhook de Slack>"}` |
 
-Terraform carga `data/sales.csv` en un bucket de entrada real. Glue y Athena
-quedan como pasos ilustrativos con nombres de ejemplo: sus recursos no se crean.
-La consulta representa un resumen de unidades e importe por producto.
+   La [guía de GitHub y Slack](infra/secrets-manager/README.md) explica cómo
+   obtenerlos y cargarlos. No se usa `.env`.
+3. Desde la raíz del repo:
 
-El incidente es intencional: se publicó el DAG sin completar los permisos de MWAA.
-Puede listar el bucket, pero no leer el archivo ni ejecutar el job Glue. El sensor
-recibe `403` al consultar el objeto, Glue queda `upstream_failed` y el DAG termina
-fallido aunque el agente acepte el incidente. No hay excepciones artificiales.
-El DAG se dispara manualmente para la demo; el sensor comprueba la llegada del
-archivo, no existe un trigger de eventos S3.
+   ```bash
+   cd infra
+   terraform init  # Sólo la primera vez o al cambiar módulos/providers
+   terraform apply
+   ```
 
-El agente contrasta logs, existencia del archivo y políticas del rol de MWAA.
-Puede proponer el fix en `infra/mwaa/sales-access.tf`, distinguiendo el error
-observado de los permisos faltantes en Glue, que todavía no se ejecutó.
-No aplica la PR: merge, `terraform apply` y una nueva ejecución quedan a cargo
-de la persona. Corregir sólo S3 no completa el pipeline: las tareas siguientes
-pueden fallar por permisos o por recursos inexistentes.
+Terraform construye y publica la imagen del agente, crea el Runtime, sube el DAG
+y el CSV de ejemplo a S3 y configura las Variables de Airflow. No hace falta
+publicar imágenes ni cargar Variables manualmente. Para actualizar código,
+volvé a ejecutar `terraform apply`.
 
-Para desplegar la POC, cargar una vez los secretos de GitHub y Slack, tener
-AWS CLI autenticado y Docker funcionando, y ejecutar `terraform apply` desde
-`infra/` (con `terraform init` la primera vez). El build y push de la imagen,
-las Variables y la publicación del DAG están automatizados. `terraform destroy`
-conserva los dos secretos de integración para reutilizarlos mañana.
-Sólo MWAA necesita la VPC de la POC. AgentCore usa red `PUBLIC` administrada
-por AWS y conserva la autenticación IAM para las invocaciones.
+## Qué se levanta
 
-## Construir el contenedor
-
-Desde la raíz del repositorio, con Docker y buildx disponibles:
-
-```bash
-docker buildx build --platform linux/arm64 --load \
-  -f airflow-agent/container/Dockerfile \
-  -t nerdearla-airflow-agent:dev ./airflow-agent
-```
-
-Usamos el protocolo HTTP del SDK de AgentCore, con `/ping` y `/invocations`
-en el puerto 8080. La imagen para AgentCore se construye para ARM64.
-No se requiere `.venv` ni instalar paquetes Python en la máquina anfitriona.
-El contexto de build sigue siendo `airflow-agent/`.
-
-## Herramientas y configuración
-
-`airflow-agent/config.yaml` contiene el modelo, la región por defecto, las
-instrucciones y los límites. Se incluye en la imagen; sus cambios requieren
-reconstruir y desplegar. En desarrollo se puede montar ese archivo como volumen.
-`AWS_REGION` del Runtime tiene prioridad sobre la región del YAML.
-
-Los límites iniciales son 12 turnos del modelo, 20 llamadas a tools, 4096 tokens
-de salida por respuesta, 80000 tokens acumulados y 300 segundos. Strands verifica
-turnos y tokens entre iteraciones: el presupuesto de tokens puede superarse por
-una respuesta. El plazo de tiempo se comprueba antes de iniciar cada modelo/tool;
-no interrumpe una petición ya en curso. Los clientes tienen sus propios timeouts.
-Las tools se ejecutan secuencialmente y Slack se intenta una vez por invocación.
-
-Las tools consultan el DAG, sus ejecuciones, tareas y logs en MWAA/CloudWatch;
-leen código en GitHub y S3, inspeccionan IAM y el archivo de ventas; crean una
-draft PR y publican un mensaje en Slack. La simulación IAM no reemplaza una
-llamada real ni evalúa todas las políticas externas al rol.
-Se conectan a Strands con `Agent(tools=get_tools(), ...)`.
-
-La infraestructura pasará estas variables **no secretas** al Runtime:
-
-| Variable | Valor o propósito |
+| Servicio | Para qué se usa |
 | --- | --- |
-| `AWS_REGION` | Región de los recursos AWS |
-| `MWAA_ENVIRONMENT_NAME` | Nombre del entorno MWAA |
-| `AIRFLOW_DAG_ID` | DAG permitido; default `demo_pipeline` |
-| `GITHUB_REPO` | `owner/repo` |
-| `GITHUB_BASE_BRANCH` | Rama base; default `main` |
-| `GITHUB_DAG_PATH` | DAG modificable; default `dags/demo_pipeline.py` |
-| `GITHUB_IAM_PATH` | Archivo IAM modificable: `infra/mwaa/sales-access.tf` |
-| `SALES_INPUT_BUCKET`, `SALES_INPUT_KEY` | Archivo de entrada que el agente puede inspeccionar |
-| `GITHUB_SECRET_ID` | Nombre o ARN del secreto de GitHub |
-| `SLACK_SECRET_ID` | Nombre o ARN del secreto de Slack |
-| `ENABLE_DAG_RERUN` | Default `false`; habilitar sólo para la fase de recuperación |
+| **MWAA** | Ejecuta el DAG y envía el incidente al agente. |
+| **AgentCore Runtime** | Aloja el agente, que usa Bedrock para razonar y sus tools para investigar y actuar. |
+| **S3 y ECR** | Guardan el DAG, sus requisitos, el CSV de entrada y la imagen del agente. |
+| **Secrets Manager** | Provee las credenciales de las integraciones y las Variables de Airflow. |
+| **CloudWatch** | Reúne los logs de Airflow y del agente. |
+| **IAM y KMS** | Controlan los permisos y el cifrado del entorno. |
+| **VPC y NAT** | Dan conectividad a MWAA. AgentCore usa red `PUBLIC` con autenticación IAM. |
 
-Crear una sola vez los secretos como JSON en Secrets Manager antes del primer apply:
+## Ejecutar la demo
 
-```json
-{"token": "<token de GitHub>"}
+Abrí la UI de MWAA (su dirección sale con `terraform output -raw mwaa_webserver_url`),
+activá `demo_pipeline` y dispará una ejecución manual.
+
+```text
+S3KeySensor → GlueJobOperator → AthenaOperator
+    │ falla por falta de s3:GetObject
+    └─ BedrockInvokeAgentRuntimeOperator → AgentCore
+                                             ├─ consulta Airflow, logs, S3 e IAM
+                                             ├─ propone una draft PR en GitHub
+                                             └─ notifica por Slack
 ```
 
-```json
-{"webhook_url": "<incoming webhook de Slack>"}
-```
+El archivo existe, pero omitimos intencionalmente su permiso de lectura en el rol
+de MWAA. El sensor falla con `403` y el operador de AgentCore envía el contexto
+del incidente. El agente acepta la solicitud y continúa el triage en segundo plano;
+**el DAG queda fallido**.
 
-Los secretos se consultan al usar cada integración. El token de GitHub necesita
-Contents y Pull requests con escritura sobre el repo. El webhook elige el canal.
-No se usa `.env`. Los valores reales no deben entrar en Git ni en la imagen.
+El resultado esperado es un diagnóstico, una draft PR con el permiso faltante y
+un aviso en Slack. Una persona revisa y aplica el cambio: no hay merge ni
+reejecución automática. **Glue y Athena son pasos ilustrativos:** no se crean
+sus recursos ni se conceden sus permisos. Quedan bloqueados por la primera falla;
+corregir S3 no convierte este ejemplo en un ETL completo.
 
-La PR modifica un solo archivo permitido y verifica su SHA. Para Python comprueba
-la sintaxis; Terraform requiere `validate` y `plan` después de revisar la PR. No ejecuta
-el código propuesto ni demuestra que el fix sea correcto. Una rama estable por
-incidente permite continuar una operación parcial y reutilizar una PR existente.
-Una carrera entre invocaciones puede producir un conflicto: volver a consultar
-antes de reintentar. Slack no garantiza deduplicación; un timeout puede ocurrir
-después de enviar el mensaje, por lo que no se reintenta automáticamente.
+## Limpiar
 
-`rerun_dag` está deshabilitada por defecto. Una vez revisado y desplegado el fix,
-se puede habilitar: conserva `conf`, exige una ejecución de origen fallida y usa
-un ID estable. Un segundo intento recibe un conflicto de Airflow; consultar ese
-ID con `get_dag_run`. No permite encadenar ejecuciones de recuperación. La tool
-no verifica merge ni despliegue; esa coordinación queda pendiente.
-
-Los logs usan el formato estándar `dag_id=.../run_id=.../task_id=.../` de Airflow.
-Se descubren streams antes de leerlos; una plantilla de logs personalizada
-requiere adaptar ese prefijo. Los logs deben estar habilitados en MWAA. Las
-lecturas son limitadas y reportan truncamiento. S3 devuelve la versión actual
-del archivo, no garantiza el código histórico de una ejecución.
-
-El rol del Runtime necesitará `airflow:GetEnvironment`, `airflow:InvokeRestApi`,
-`logs:DescribeLogStreams`, `logs:GetLogEvents`, `s3:GetObject` y
-`secretsmanager:GetSecretValue`, limitados a los recursos del workshop. Agregar
-`kms:Decrypt` si se usan claves propias. Un webserver privado requiere acceso
-de red desde el Runtime; GitHub y Slack requieren salida HTTPS.
-Para el modelo se necesita `bedrock:InvokeModel` tanto sobre el perfil de inferencia
-`us.anthropic.claude-sonnet-4-6` como sobre los modelos de sus regiones de destino.
-Que funcione con credenciales locales no confirma todavía los permisos del futuro rol.
-
-## Probar con Docker
-
-Después de construir `nerdearla-airflow-agent:dev`, desde la raíz del repo:
+Desde `infra/`, con las mismas credenciales y conservando el state local:
 
 ```bash
-docker run --rm --network none \
-  -v "$PWD/tests:/tests:ro" \
-  nerdearla-airflow-agent:dev python -m unittest discover -s /tests -v
+terraform destroy
 ```
 
-Los tests usan respuestas simuladas y no envían mensajes, crean PRs ni invocan AWS.
-Para probar el contrato HTTP sin configurar integraciones:
+Al terminar sin errores, elimina el entorno administrado por Terraform, incluidos
+MWAA, Runtime, NAT, buckets con sus objetos, imágenes y logs. **Conserva los dos
+secretos de integración**, que pueden seguir generando cargos, y programa la
+eliminación de la clave KMS a siete días. Las PRs y los mensajes publicados quedan
+en GitHub y Slack. Podés levantar la POC nuevamente con `terraform apply`.
 
-```bash
-docker run --rm -p 127.0.0.1:8080:8080 nerdearla-airflow-agent:dev
-```
+## Dónde mirar
 
-En otra terminal, consultar `http://localhost:8080/ping` o enviar el evento de
-entrada con POST a `http://localhost:8080/invocations`. Sin configuración del
-entorno devuelve `configuration_error`; un payload inválido devuelve `invalid_input`.
-Una invocación con configuración y credenciales reales puede crear PRs y enviar
-Slack. Las pruebas automatizadas usan un modelo y servicios simulados.
+- [DAG](dags/demo_pipeline.py): operadores y contexto del incidente.
+- [Agente](airflow-agent/agent.py), [tools](airflow-agent/tools.py) y
+  [configuración](airflow-agent/config.yaml): modelo, instrucciones y límites.
+- [Infraestructura](infra/README.md): módulos por servicio y detalles operativos.
 
-## Evento de entrada
-
-Este objeto se pasa como `payload` al `BedrockInvokeAgentRuntimeOperator`.
-`task_id` identifica la tarea que falló, no la tarea que invoca al agente.
-La validación rechaza campos adicionales y entornos o DAGs fuera del alcance.
-
-```json
-{
-  "environment_name": "workshop-mwaa",
-  "dag_id": "demo_pipeline",
-  "run_id": "<run_id de la ejecución fallida>",
-  "task_id": "wait_for_sales"
-}
-```
-
-## Invocación y triage en segundo plano
-
-El DAG usa `S3KeySensor`, `GlueJobOperator`, `AthenaOperator` y
-`BedrockInvokeAgentRuntimeOperator`. Athena resume unidades e importe por producto
-como ejemplo de lo que haría el siguiente paso; no se aprovisiona su destino.
-El agente valida el incidente, responde `{"status": "accepted", "incident": {...}}`
-y sigue investigando en un hilo separado. El SDK registra el trabajo con
-`add_async_task` y mantiene `/ping` en `HealthyBusy` hasta que el triage termina;
-`complete_async_task` libera ese estado en un `finally`.
-
-El DAG espera sólo la recepción HTTP, no el diagnóstico. No hay `check_result`,
-XCom de la investigación ni reintentos automáticos de esa invocación. Las tareas
-Glue y Athena quedan `upstream_failed` cuando falla el sensor, preservando el DAG fallido.
-La rama de triage cubre la falla del sensor; no las fallas posteriores de Glue o Athena.
-
-El agente se ocupa de leer logs, revisar código, abrir una draft PR y notificar
-por Slack. El resultado completo queda en los logs de AgentCore; la PR y Slack
-son las salidas para la persona. Los estados internos y las acciones confirmadas
-siguen registrándose, pero ya no condicionan el resultado del DAG.
-
-Esta recepción asíncrona no es una cola durable: si el proceso del agente se
-pierde, el trabajo en memoria puede perderse. `accepted` confirma recepción,
-no recuperación ni entrega garantizada. No se habilita merge ni rerun automático.
-
-Terraform crea las Variables `agentcore_runtime_arn`, `mwaa_environment_name`,
-`sales_input_bucket`
-en Secrets Manager y configura el backend de Airflow para consultarlas.
-No hay que cargarlas en la UI; tampoco aparecen en el listado de Variables de la UI.
-Se resuelven al ejecutar la tarea, no al importar el DAG. El operador usa el rol
-IAM de MWAA (`aws_conn_id=None`), endpoint `workshop` y un timeout de lectura de
-120 segundos para el arranque y la recepción, independiente del límite de triage.
-
-Para validar el DAG con Airflow 3.3.1 y provider Amazon 9.34.0, ejecutar
-`python -m unittest discover -s tests/dags -v` en un contenedor con esas dependencias.
-
-[Procesamiento asíncrono en AgentCore](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-long-run.html)
-
-## Próximos pasos
-
-1. Desplegar la infraestructura definida en [infra/README.md](infra/README.md) y completar los secretos.
-2. Ejecutar el DAG para validar la investigación real con las Variables gestionadas por Terraform.
-3. Completar el despliegue y comprobar la recuperación después del merge.
-
-Pendiente validar versión de MWAA y provider Amazon, IAM, conectividad y secretos.
-El flujo completo de punta a punta todavía requiere validación sobre AWS.
+El flujo completo DAG → agente → PR → Slack todavía está pendiente de validación
+end-to-end en AWS.
