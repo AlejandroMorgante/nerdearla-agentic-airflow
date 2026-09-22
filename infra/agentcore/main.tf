@@ -54,13 +54,8 @@ resource "aws_bedrockagentcore_agent_runtime" "agent" {
       container_uri = var.image_uri
     }
   }
-  network_configuration {
-    network_mode = "VPC"
-    network_mode_config {
-      security_groups = [aws_security_group.agent.id]
-      subnets         = var.subnet_ids
-    }
-  }
+  # Salida administrada por AgentCore; las invocaciones siguen autenticadas con IAM.
+  network_configuration { network_mode = "PUBLIC" }
   protocol_configuration { server_protocol = "HTTP" }
   environment_variables = {
     MWAA_ENVIRONMENT_NAME = local.project
@@ -121,16 +116,4 @@ resource "aws_cloudwatch_log_delivery" "agent" {
   count                    = local.agent_count
   delivery_source_name     = aws_cloudwatch_log_delivery_source.agent[0].name
   delivery_destination_arn = aws_cloudwatch_log_delivery_destination.agent[0].arn
-}
-
-resource "aws_security_group" "agent" {
-  name_prefix = "${local.project}-agent-"
-  description = "Salida del agente a APIs AWS, GitHub y Slack"
-  vpc_id      = var.vpc_id
-  egress {
-    protocol    = "-1"
-    from_port   = 0
-    to_port     = 0
-    cidr_blocks = ["0.0.0.0/0"]
-  }
 }

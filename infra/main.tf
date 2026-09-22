@@ -80,7 +80,4 @@ module "agentcore" {
   mwaa_role_id       = module.mwaa.role_id
   sales_input_bucket = module.s3.sales_input_bucket
   task_log_arn       = module.mwaa.task_log_arn
-  vpc_id             = module.vpc.vpc_id
-  subnet_ids         = module.vpc.private_subnet_ids
-  depends_on         = [module.vpc]
 }

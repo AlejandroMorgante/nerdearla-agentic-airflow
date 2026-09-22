@@ -25,10 +25,6 @@ variable "mwaa_role_id" { type = string }
 
 variable "kms_key_arn" { type = string }
 
-variable "subnet_ids" { type = list(string) }
-
-variable "vpc_id" { type = string }
-
 variable "model_id" { type = string }
 
 

@@ -27,14 +27,16 @@ Terraform desde `infra/`, no dentro de cada servicio.
 Los roles IAM y los logs pertenecen al módulo del servicio que los usa.
 Terraform se ejecuta directamente e invoca Docker para construir la imagen del agente.
 
-MWAA y AgentCore usan subnets privadas con salida por NAT. La UI de MWAA es
-pública con autenticación AWS; AgentCore requiere IAM. El agente tiene acceso
-Viewer a Airflow y la reejecución está deshabilitada. Los logs de MWAA y AgentCore están cifrados con
-KMS; todos los grupos gestionados se conservan siete días. Un solo NAT simplifica la demo, sin alta disponibilidad.
+Sólo MWAA usa la VPC del workshop: dos subnets privadas, dos públicas y un NAT.
+AgentCore usa red `PUBLIC` administrada por AWS, sin subnets ni security group
+propios. Las invocaciones siguen requiriendo IAM; `PUBLIC` es el modo de red,
+no acceso anónimo. El agente llama a las APIs de MWAA, CloudWatch, S3 y Secrets
+Manager, y tiene salida HTTPS para GitHub y Slack.
 
-Verificar las zonas soportadas por AgentCore en la cuenta donde se desplegará;
-los nombres de Availability Zones pueden corresponder a IDs diferentes entre cuentas.
-El plan y el apply operan sobre la cuenta del perfil seleccionado en el AWS CLI.
+La UI de MWAA es pública con autenticación AWS. El agente tiene acceso Viewer
+a Airflow y la reejecución está deshabilitada. Los logs de MWAA y AgentCore están
+cifrados con KMS y se conservan siete días. Un NAT simplifica la POC, sin alta
+disponibilidad. El plan y el apply usan la cuenta del perfil activo del AWS CLI.
 
 ## Módulos y despliegues independientes
 
@@ -166,7 +168,11 @@ no desaparece inmediatamente. El borrado de los servicios puede ser asíncrono.
 
 Conservar el state y revisar que `destroy` termine sin errores. Si los recursos ya
 existían antes de incorporar estos flags, ejecutar primero `terraform apply` para
-registrarlos en el state. No se ha probado todavía un ciclo real de apply/destroy.
+registrarlos en el state. El apply real se verificó; la primera limpieza encontró interfaces del despliegue
+anterior de AgentCore en VPC que AWS puede retener hasta ocho horas. El modo PUBLIC
+actual evita crear esas interfaces en próximos despliegues. Si quedó state pendiente,
+completar `terraform destroy` cuando AWS libere las interfaces antes de recrear.
+[Retención de interfaces de AgentCore](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agentcore-vpc.html).
 No borra el repositorio GitHub, las PRs, mensajes o webhooks de Slack ni los tokens
 emitidos en GitHub. Tampoco administra recursos creados fuera de este state,
 como roles vinculados a servicios que AWS pueda crear automáticamente.

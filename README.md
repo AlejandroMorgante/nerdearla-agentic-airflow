@@ -66,6 +66,8 @@ AWS CLI autenticado y Docker funcionando, y ejecutar `terraform apply` desde
 `infra/` (con `terraform init` la primera vez). El build y push de la imagen,
 las Variables y la publicación del DAG están automatizados. `terraform destroy`
 conserva los dos secretos de integración para reutilizarlos mañana.
+Sólo MWAA necesita la VPC de la POC. AgentCore usa red `PUBLIC` administrada
+por AWS y conserva la autenticación IAM para las invocaciones.
 
 ## Construir el contenedor
 
