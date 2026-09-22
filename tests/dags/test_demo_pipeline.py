@@ -50,16 +50,13 @@ class DemoPipelineTests(unittest.TestCase):
         })
         self.assertEqual(result["response"]["status"], "accepted")
 
-    def test_athena_renders_catalog_and_workgroup(self):
+    def test_athena_keeps_illustrative_targets(self):
         import copy
         from airflow.providers.amazon.aws.operators.athena import AthenaOperator
         task = copy.deepcopy(module.summarize_sales)
         self.assertIsInstance(task, AthenaOperator)
-        task.render_template_fields({"var": {"value": {
-            "sales_database": "workshop_sales", "sales_athena_workgroup": "workshop-sales",
-        }}})
-        self.assertEqual(task.database, "workshop_sales")
-        self.assertEqual(task.workgroup, "workshop-sales")
+        self.assertEqual(task.database, "sales")
+        self.assertEqual(task.workgroup, "sales-reports")
         self.assertIn("SUM(amount)", task.query)
 
     def test_sensor_propagates_access_denied_instead_of_waiting(self):

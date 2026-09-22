@@ -19,8 +19,6 @@ infra/
   agentcore/        # Runtime, endpoint, permisos y logs
   mwaa/             # Airflow, permisos, logs y requisitos
   vpc/              # Red del workshop
-  athena/           # Workgroup y ubicación del reporte
-  glue/             # Job de ventas, script e IAM
   s3/               # DAGs y artefactos
   ecr/              # Imágenes del agente
   secrets-manager/  # Credenciales persistentes y Variables de Airflow
@@ -45,9 +43,9 @@ wait_for_sales (S3KeySensor) → process_sales (GlueJobOperator) → summarize_s
        └─ si falla → investigate_failure → AgentCore
 ```
 
-Terraform carga `data/sales.csv` en el bucket de entrada y crea un job Glue que
-valida las ventas, calcula `amount` y escribe Parquet en el bucket de salida.
-El ejemplo contiene tres ventas por un total de 410.00.
+Terraform carga `data/sales.csv` en un bucket de entrada real. Glue y Athena
+quedan como pasos ilustrativos con nombres de ejemplo: sus recursos no se crean.
+La consulta representa un resumen de unidades e importe por producto.
 
 El incidente es intencional: se publicó el DAG sin completar los permisos de MWAA.
 Puede listar el bucket, pero no leer el archivo ni ejecutar el job Glue. El sensor
@@ -60,7 +58,8 @@ El agente contrasta logs, existencia del archivo y políticas del rol de MWAA.
 Puede proponer el fix en `infra/mwaa/sales-access.tf`, distinguiendo el error
 observado de los permisos faltantes en Glue, que todavía no se ejecutó.
 No aplica la PR: merge, `terraform apply` y una nueva ejecución quedan a cargo
-de la persona. Corregir sólo S3 expone después el permiso faltante de Glue.
+de la persona. Corregir sólo S3 no completa el pipeline: las tareas siguientes
+pueden fallar por permisos o por recursos inexistentes.
 
 Para desplegar la POC, cargar una vez los secretos de GitHub y Slack, tener
 AWS CLI autenticado y Docker funcionando, y ejecutar `terraform apply` desde
@@ -115,7 +114,6 @@ La infraestructura pasará estas variables **no secretas** al Runtime:
 | `GITHUB_DAG_PATH` | DAG modificable; default `dags/demo_pipeline.py` |
 | `GITHUB_IAM_PATH` | Archivo IAM modificable: `infra/mwaa/sales-access.tf` |
 | `SALES_INPUT_BUCKET`, `SALES_INPUT_KEY` | Archivo de entrada que el agente puede inspeccionar |
-| `SALES_JOB_ARN` | Job concreto para la simulación de permisos |
 | `GITHUB_SECRET_ID` | Nombre o ARN del secreto de GitHub |
 | `SLACK_SECRET_ID` | Nombre o ARN del secreto de Slack |
 | `ENABLE_DAG_RERUN` | Default `false`; habilitar sólo para la fase de recuperación |
@@ -205,7 +203,7 @@ La validación rechaza campos adicionales y entornos o DAGs fuera del alcance.
 
 El DAG usa `S3KeySensor`, `GlueJobOperator`, `AthenaOperator` y
 `BedrockInvokeAgentRuntimeOperator`. Athena resume unidades e importe por producto
-y guarda el resultado en `athena-results/` del bucket de salida.
+como ejemplo de lo que haría el siguiente paso; no se aprovisiona su destino.
 El agente valida el incidente, responde `{"status": "accepted", "incident": {...}}`
 y sigue investigando en un hilo separado. El SDK registra el trabajo con
 `add_async_task` y mantiene `/ping` en `HealthyBusy` hasta que el triage termina;
@@ -226,7 +224,7 @@ pierde, el trabajo en memoria puede perderse. `accepted` confirma recepción,
 no recuperación ni entrega garantizada. No se habilita merge ni rerun automático.
 
 Terraform crea las Variables `agentcore_runtime_arn`, `mwaa_environment_name`,
-`sales_input_bucket`, `sales_glue_job`, `sales_database` y `sales_athena_workgroup`
+`sales_input_bucket`
 en Secrets Manager y configura el backend de Airflow para consultarlas.
 No hay que cargarlas en la UI; tampoco aparecen en el listado de Variables de la UI.
 Se resuelven al ejecutar la tarea, no al importar el DAG. El operador usa el rol

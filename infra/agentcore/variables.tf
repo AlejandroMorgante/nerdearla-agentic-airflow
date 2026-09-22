@@ -33,5 +33,3 @@ variable "model_id" { type = string }
 
 
 variable "sales_input_bucket" { type = string }
-
-variable "sales_job_arn" { type = string }

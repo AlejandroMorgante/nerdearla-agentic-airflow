@@ -151,7 +151,7 @@ def read_task_logs(dag_id: str, run_id: str, task_id: str, stream: str,
 
 @tool
 def inspect_mwaa_permissions() -> dict:
-    """Lee las políticas inline del rol de MWAA y simula acceso al archivo y job.
+    """Lee las políticas inline del rol de MWAA y simula acceso al archivo de entrada.
 
     La simulación IAM es evidencia parcial: no reproduce todas las políticas
     de recursos, SCPs ni condiciones de una llamada real. No modifica permisos.
@@ -165,14 +165,10 @@ def inspect_mwaa_permissions() -> dict:
                 for page in names for name in page["PolicyNames"]]
     attached = [policy for page in iam.get_paginator("list_attached_role_policies").paginate(
         RoleName=role_name) for policy in page["AttachedPolicies"]]
-    checks = []
-    for actions, resource in [
-        (["s3:GetObject"], f"arn:aws:s3:::{_setting('SALES_INPUT_BUCKET')}/{_setting('SALES_INPUT_KEY')}"),
-        (["glue:GetJob", "glue:StartJobRun", "glue:GetJobRun"], _setting("SALES_JOB_ARN")),
-    ]:
-        checks.extend(iam.simulate_principal_policy(
-            PolicySourceArn=role_arn, ActionNames=actions, ResourceArns=[resource],
-        )["EvaluationResults"])
+    checks = iam.simulate_principal_policy(
+        PolicySourceArn=role_arn, ActionNames=["s3:GetObject"],
+        ResourceArns=[f"arn:aws:s3:::{_setting('SALES_INPUT_BUCKET')}/{_setting('SALES_INPUT_KEY')}"],
+    )["EvaluationResults"]
     return {"role_arn": role_arn, "inline_policies": policies, "attached_policies": attached,
             "permissions_boundary": role.get("PermissionsBoundary"), "simulation": checks,
             "note": "Simulación parcial; contrastar con los logs. Las managed policies se listan sin su contenido."}

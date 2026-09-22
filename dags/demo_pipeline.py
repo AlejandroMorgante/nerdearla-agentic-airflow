@@ -28,9 +28,10 @@ with DAG(
         timeout=300,
     )
 
+    # Pasos ilustrativos: la POC se detiene en la falla de acceso del sensor.
     process_sales = GlueJobOperator(
         task_id="process_sales",
-        job_name="{{ var.value.sales_glue_job }}",
+        job_name="sales-etl",
         aws_conn_id=None,
         update_config=False,
         wait_for_completion=True,
@@ -46,8 +47,8 @@ with DAG(
             GROUP BY product
             ORDER BY revenue DESC
         """,
-        database="{{ var.value.sales_database }}",
-        workgroup="{{ var.value.sales_athena_workgroup }}",
+        database="sales",
+        workgroup="sales-reports",
         aws_conn_id=None,
         deferrable=False,
     )

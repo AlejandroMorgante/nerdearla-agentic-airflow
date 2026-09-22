@@ -11,9 +11,7 @@ infra/
   agentcore/        # Runtime, endpoint, IAM y logs del agente
   mwaa/             # Airflow, IAM, logs y requirements.txt
   vpc/              # Red, subnets y NAT
-  s3/               # Artefactos, buckets de ventas y CSV de ejemplo
-  athena/           # Workgroup y ubicación del reporte
-  glue/             # Job Spark, script, rol y logs
+  s3/               # Artefactos, bucket de entrada y CSV de ejemplo
   ecr/              # Repositorio de imágenes
   secrets-manager/  # Referencias a credenciales persistentes y Variables de Airflow
   kms/              # Clave de cifrado compartida
@@ -114,12 +112,13 @@ Un cambio en esos archivos reconstruye la imagen; un cambio sólo en el DAG no.
 El build corre localmente mediante `ecr/build.sh`, invocado por Terraform.
 Si el push ya terminó en un intento anterior, el script reutiliza ese tag inmutable.
 
-Terraform también crea los buckets, carga el CSV, el script Glue, el DAG y los
-requisitos de Airflow; crea el job Glue, su catálogo y el workgroup Athena.
+Terraform crea los buckets de artefactos y entrada, carga el CSV, el DAG y los
+requisitos de Airflow. Glue y Athena sólo aparecen como operadores en el DAG;
+no se crean jobs, catálogos, workgroups ni buckets de resultados.
 Un cambio del DAG actualiza el mismo objeto en S3 y MWAA lo sincroniza.
 
-Las Variables `mwaa_environment_name`, `agentcore_runtime_arn`, `sales_input_bucket`,
-`sales_glue_job`, `sales_database` y `sales_athena_workgroup` se crean automáticamente
+Las Variables `mwaa_environment_name`, `agentcore_runtime_arn` y
+`sales_input_bucket` se crean automáticamente
 en Secrets Manager bajo `${project}/airflow/variables/`. Airflow las consulta a través
 del backend configurado; no hay que cargarlas en la UI y no aparecen en su listado.
 Estas referencias de infraestructura sí entran al state y se eliminan con el entorno.
@@ -139,17 +138,15 @@ faltan los permisos Glue para el job. La primera tarea falla por acceso y bloque
 el procesamiento. No ejecutar manualmente la tarea Glue saltándose dependencias.
 
 La PR del agente puede modificar `mwaa/sales-access.tf`. Ese módulo recibe
-`sales_input_arn` y `sales_job_arn` para proponer permisos sobre recursos concretos.
+`sales_input_arn` para proponer un permiso sobre el objeto concreto.
 El agente puede leer las políticas inline y simular acciones del rol de MWAA;
 no puede modificar IAM ni desplegar. Su acceso de lectura al archivo permite
 comprobar existencia, pero no implica que MWAA tenga ese mismo acceso.
 
-Glue usa su propio rol y un script Spark en `glue/sales.py`. Si se decide aplicar
-el fix y probar el procesamiento, genera Parquet en `sales/` del bucket de salida.
-El job usa dos workers G.1X, máximo diez minutos, sin reintentos. Athena consulta la tabla `sales` del catálogo Glue y genera el resumen por producto
-en `athena-results/`, separado del Parquet. Terraform crea el catálogo y un workgroup
-con límite de lectura de 10 MiB por consulta. MWAA tampoco tiene permisos Athena,
-lectura del catálogo ni acceso a los resultados: son parte del incidente intencional.
+Glue y Athena conservan nombres de ejemplo en el DAG. No se crean sus recursos
+ni se conceden sus permisos. Si se llega a esos pasos, pueden fallar por acceso
+o por recursos inexistentes. La rama del agente está conectada a la falla inicial
+del sensor; corregirla no significa que el pipeline completo vaya a funcionar.
 
 ## Limpieza
 

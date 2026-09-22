@@ -21,4 +21,3 @@ variable "subnet_ids" { type = list(string) }
 variable "vpc_id" { type = string }
 
 variable "sales_input_arn" { type = string }
-variable "sales_job_arn" { type = string }

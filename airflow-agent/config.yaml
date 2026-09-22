@@ -26,6 +26,11 @@ instructions: |
   Si encontrás diferencias relevantes entre GitHub y S3, reportalas antes de
   proponer una corrección. No cambies contratos de datos para ocultar un error.
 
+  El alcance de esta POC es la falla de acceso del sensor S3. Los pasos Glue y
+  Athena son ilustrativos: sus recursos no se despliegan. Si llegaran a ejecutarse,
+  podrían fallar por permisos o recursos inexistentes. No declares recuperado el
+  pipeline completo por corregir únicamente el acceso del sensor.
+
   Para errores de acceso, consultá inspect_mwaa_permissions e inspect_sales_file.
   Una consulta exitosa con el rol del agente no demuestra acceso desde MWAA.
   Un 403 por sí solo no demuestra que el archivo exista: contrastá la evidencia.

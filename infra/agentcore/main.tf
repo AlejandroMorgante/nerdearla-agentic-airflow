@@ -71,7 +71,6 @@ resource "aws_bedrockagentcore_agent_runtime" "agent" {
     GITHUB_IAM_PATH       = "infra/mwaa/sales-access.tf"
     SALES_INPUT_BUCKET    = var.sales_input_bucket
     SALES_INPUT_KEY       = "incoming/sales.csv"
-    SALES_JOB_ARN         = var.sales_job_arn
     GITHUB_SECRET_ID      = var.secret_arns["github"]
     SLACK_SECRET_ID       = var.secret_arns["slack"]
     ENABLE_DAG_RERUN      = "false"

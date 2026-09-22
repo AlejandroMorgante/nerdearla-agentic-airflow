@@ -23,7 +23,6 @@ class ToolsTest(unittest.TestCase):
             "GITHUB_DAG_PATH": "dags/demo_pipeline.py", "ENABLE_DAG_RERUN": "false",
             "GITHUB_IAM_PATH": "infra/mwaa/sales-access.tf",
             "SALES_INPUT_BUCKET": "sales-input", "SALES_INPUT_KEY": "incoming/sales.csv",
-            "SALES_JOB_ARN": "arn:aws:glue:us-east-1:000000000000:job/sales",
         }, clear=True)
         self.env.start()
         self.addCleanup(self.env.stop)
@@ -173,9 +172,9 @@ class ToolsTest(unittest.TestCase):
             result = tools.inspect_mwaa_permissions()
         self.assertEqual(result["role_arn"], arn)
         checks = iam.simulate_principal_policy.call_args_list
+        self.assertEqual(len(checks), 1)
         self.assertEqual(checks[0].kwargs["PolicySourceArn"], arn)
         self.assertEqual(checks[0].kwargs["ResourceArns"], ["arn:aws:s3:::sales-input/incoming/sales.csv"])
-        self.assertEqual(checks[1].kwargs["ResourceArns"], [os.environ["SALES_JOB_ARN"]])
 
     def test_invalid_python_never_reaches_github(self):
         with patch.object(tools, "_github") as github:
