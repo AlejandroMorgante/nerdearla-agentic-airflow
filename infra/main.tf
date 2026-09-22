@@ -52,7 +52,11 @@ module "secrets_manager" {
   source = "./secrets-manager"
   config = local.config
   airflow_variables = merge(
-    { mwaa_environment_name = local.config.project },
+    {
+      mwaa_environment_name = local.config.project
+      sales_input_bucket    = module.s3.sales_input_bucket
+      sales_glue_job        = module.glue.job_name
+    },
     var.agent_image_tag == null ? {} : { agentcore_runtime_arn = module.agentcore.runtime_arn },
   )
 }
@@ -62,11 +66,21 @@ module "kms" {
   config = local.config
 }
 
+module "glue" {
+  source           = "./glue"
+  config           = local.config
+  artifacts_bucket = module.s3.bucket_name
+  input_bucket     = module.s3.sales_input_bucket
+  output_bucket    = module.s3.sales_output_bucket
+}
+
 module "mwaa" {
   source               = "./mwaa"
   config               = local.config
   bucket_arn           = module.s3.bucket_arn
   kms_key_arn          = module.kms.key_arn
+  sales_input_arn      = module.s3.sales_input_arn
+  sales_job_arn        = module.glue.job_arn
   requirements_key     = module.s3.requirements_key
   requirements_version = module.s3.requirements_version
   vpc_id               = module.vpc.vpc_id
@@ -76,19 +90,21 @@ module "mwaa" {
 }
 
 module "agentcore" {
-  source          = "./agentcore"
-  config          = local.config
-  model_id        = local.model_id
-  agent_image_tag = var.agent_image_tag
-  repository_arn  = module.ecr.repository_arn
-  repository_url  = module.ecr.repository_url
-  secret_arns     = module.secrets_manager.secret_arns
-  bucket_arn      = module.s3.bucket_arn
-  kms_key_arn     = module.kms.key_arn
-  mwaa_arn        = module.mwaa.environment_arn
-  mwaa_role_id    = module.mwaa.role_id
-  task_log_arn    = module.mwaa.task_log_arn
-  vpc_id          = module.vpc.vpc_id
-  subnet_ids      = module.vpc.private_subnet_ids
-  depends_on      = [module.vpc]
+  source             = "./agentcore"
+  config             = local.config
+  model_id           = local.model_id
+  agent_image_tag    = var.agent_image_tag
+  repository_arn     = module.ecr.repository_arn
+  repository_url     = module.ecr.repository_url
+  secret_arns        = module.secrets_manager.secret_arns
+  bucket_arn         = module.s3.bucket_arn
+  kms_key_arn        = module.kms.key_arn
+  mwaa_arn           = module.mwaa.environment_arn
+  mwaa_role_id       = module.mwaa.role_id
+  sales_input_bucket = module.s3.sales_input_bucket
+  sales_job_arn      = module.glue.job_arn
+  task_log_arn       = module.mwaa.task_log_arn
+  vpc_id             = module.vpc.vpc_id
+  subnet_ids         = module.vpc.private_subnet_ids
+  depends_on         = [module.vpc]
 }

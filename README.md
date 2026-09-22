@@ -19,6 +19,7 @@ infra/
   agentcore/        # Runtime, endpoint, permisos y logs
   mwaa/             # Airflow, permisos, logs y requisitos
   vpc/              # Red del workshop
+  glue/             # Job de ventas, script e IAM
   s3/               # DAGs y artefactos
   ecr/              # Imágenes del agente
   secrets-manager/  # Credenciales de integraciones
@@ -36,10 +37,29 @@ correctamente a una prueba mínima con credenciales locales de desarrollo en `us
 Ese profile no se copia a la imagen: AgentCore usará su propio rol IAM.
 No se necesitan credenciales para importar el módulo ni ejecutar tests.
 
-El DAG usa la interfaz de Airflow 3, sin decorators. La tarea `divide_numbers`
-ejecuta `python -c 'print(10 / 0)'` y falla con `ZeroDivisionError`. La tarea
-`investigate_failure` invoca AgentCore mediante `BedrockInvokeAgentRuntimeOperator`.
-`finish` queda `upstream_failed`, conservando el estado fallado del DAG.
+El DAG usa operadores nativos de AWS, sin decorators:
+
+```text
+wait_for_sales (S3KeySensor) → process_sales (GlueJobOperator)
+       └─ si falla → investigate_failure → AgentCore
+```
+
+Terraform carga `data/sales.csv` en el bucket de entrada y crea un job Glue que
+valida las ventas, calcula `amount` y escribe Parquet en el bucket de salida.
+El ejemplo contiene tres ventas por un total de 410.00.
+
+El incidente es intencional: se publicó el DAG sin completar los permisos de MWAA.
+Puede listar el bucket, pero no leer el archivo ni ejecutar el job Glue. El sensor
+recibe `403` al consultar el objeto, Glue queda `upstream_failed` y el DAG termina
+fallido aunque el agente acepte el incidente. No hay excepciones artificiales.
+El DAG se dispara manualmente para la demo; el sensor comprueba la llegada del
+archivo, no existe un trigger de eventos S3.
+
+El agente contrasta logs, existencia del archivo y políticas del rol de MWAA.
+Puede proponer el fix en `infra/mwaa/sales-access.tf`, distinguiendo el error
+observado de los permisos faltantes en Glue, que todavía no se ejecutó.
+No aplica la PR: merge, `terraform apply` y una nueva ejecución quedan a cargo
+de la persona. Corregir sólo S3 expone después el permiso faltante de Glue.
 
 ## Construir el contenedor
 
@@ -71,7 +91,9 @@ no interrumpe una petición ya en curso. Los clientes tienen sus propios timeout
 Las tools se ejecutan secuencialmente y Slack se intenta una vez por invocación.
 
 Las tools consultan el DAG, sus ejecuciones, tareas y logs en MWAA/CloudWatch;
-leen código en GitHub y S3; crean una draft PR y publican un mensaje en Slack.
+leen código en GitHub y S3, inspeccionan IAM y el archivo de ventas; crean una
+draft PR y publican un mensaje en Slack. La simulación IAM no reemplaza una
+llamada real ni evalúa todas las políticas externas al rol.
 Se conectan a Strands con `Agent(tools=get_tools(), ...)`.
 
 La infraestructura pasará estas variables **no secretas** al Runtime:
@@ -83,7 +105,10 @@ La infraestructura pasará estas variables **no secretas** al Runtime:
 | `AIRFLOW_DAG_ID` | DAG permitido; default `demo_pipeline` |
 | `GITHUB_REPO` | `owner/repo` |
 | `GITHUB_BASE_BRANCH` | Rama base; default `main` |
-| `GITHUB_DAG_PATH` | Único archivo modificable; default `dags/demo_pipeline.py` |
+| `GITHUB_DAG_PATH` | DAG modificable; default `dags/demo_pipeline.py` |
+| `GITHUB_IAM_PATH` | Archivo IAM modificable: `infra/mwaa/sales-access.tf` |
+| `SALES_INPUT_BUCKET`, `SALES_INPUT_KEY` | Archivo de entrada que el agente puede inspeccionar |
+| `SALES_JOB_ARN` | Job concreto para la simulación de permisos |
 | `GITHUB_SECRET_ID` | Nombre o ARN del secreto de GitHub |
 | `SLACK_SECRET_ID` | Nombre o ARN del secreto de Slack |
 | `ENABLE_DAG_RERUN` | Default `false`; habilitar sólo para la fase de recuperación |
@@ -102,7 +127,8 @@ Los secretos se consultan al usar cada integración. El token de GitHub necesita
 Contents y Pull requests con escritura sobre el repo. El webhook elige el canal.
 No se usa `.env`. Los valores reales no deben entrar en Git ni en la imagen.
 
-La PR modifica un solo archivo y verifica su SHA y sintaxis Python. No ejecuta
+La PR modifica un solo archivo permitido y verifica su SHA. Para Python comprueba
+la sintaxis; Terraform requiere `validate` y `plan` después de revisar la PR. No ejecuta
 el código propuesto ni demuestra que el fix sea correcto. Una rama estable por
 incidente permite continuar una operación parcial y reutilizar una PR existente.
 Una carrera entre invocaciones puede producir un conflicto: volver a consultar
@@ -164,27 +190,22 @@ La validación rechaza campos adicionales y entornos o DAGs fuera del alcance.
   "environment_name": "workshop-mwaa",
   "dag_id": "demo_pipeline",
   "run_id": "<run_id de la ejecución fallida>",
-  "task_id": "divide_numbers"
+  "task_id": "wait_for_sales"
 }
 ```
 
 ## Invocación y triage en segundo plano
 
-```text
-divide_numbers → finish
-       └─ si falla → investigate_failure → AgentCore
-```
-
-El DAG usa un `BashOperator` que divide por cero, un `EmptyOperator` final y un
-`BedrockInvokeAgentRuntimeOperator`. El agente valida el incidente, responde
-`{"status": "accepted", "incident": {...}}` y sigue investigando en un hilo separado.
-El SDK registra el trabajo con `add_async_task` y mantiene `/ping` en `HealthyBusy`
-hasta que el triage termina; `complete_async_task` libera ese estado en un `finally`.
+El DAG usa `S3KeySensor`, `GlueJobOperator` y `BedrockInvokeAgentRuntimeOperator`.
+El agente valida el incidente, responde `{"status": "accepted", "incident": {...}}`
+y sigue investigando en un hilo separado. El SDK registra el trabajo con
+`add_async_task` y mantiene `/ping` en `HealthyBusy` hasta que el triage termina;
+`complete_async_task` libera ese estado en un `finally`.
 
 El DAG espera sólo la recepción HTTP, no el diagnóstico. No hay `check_result`,
-XCom de la investigación ni reintentos automáticos de esa invocación. `finish` queda
-`upstream_failed` si falla `divide_numbers`, por lo que el DAG termina fallado incluso
-si el incidente fue aceptado. En esta demo se investiga la falla de `divide_numbers`.
+XCom de la investigación ni reintentos automáticos de esa invocación. La tarea
+Glue queda `upstream_failed` cuando falla el sensor, preservando el DAG fallido.
+La rama de triage cubre la falla del sensor; no las fallas posteriores de Glue.
 
 El agente se ocupa de leer logs, revisar código, abrir una draft PR y notificar
 por Slack. El resultado completo queda en los logs de AgentCore; la PR y Slack
@@ -195,7 +216,8 @@ Esta recepción asíncrona no es una cola durable: si el proceso del agente se
 pierde, el trabajo en memoria puede perderse. `accepted` confirma recepción,
 no recuperación ni entrega garantizada. No se habilita merge ni rerun automático.
 
-Terraform crea las Variables `agentcore_runtime_arn` y `mwaa_environment_name`
+Terraform crea las Variables `agentcore_runtime_arn`, `mwaa_environment_name`,
+`sales_input_bucket` y `sales_glue_job`
 en Secrets Manager y configura el backend de Airflow para consultarlas.
 No hay que cargarlas en la UI; tampoco aparecen en el listado de Variables de la UI.
 Se resuelven al ejecutar la tarea, no al importar el DAG. El operador usa el rol

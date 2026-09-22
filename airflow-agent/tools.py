@@ -149,6 +149,44 @@ def read_task_logs(dag_id: str, run_id: str, task_id: str, stream: str,
             "at_start": next_token == response["nextBackwardToken"]}
 
 
+@tool
+def inspect_mwaa_permissions() -> dict:
+    """Lee las políticas inline del rol de MWAA y simula acceso al archivo y job.
+
+    La simulación IAM es evidencia parcial: no reproduce todas las políticas
+    de recursos, SCPs ni condiciones de una llamada real. No modifica permisos.
+    """
+    role_arn = _environment()["ExecutionRoleArn"]
+    role_name = role_arn.rsplit("/", 1)[1]
+    iam = _client("iam")
+    role = iam.get_role(RoleName=role_name)["Role"]
+    names = iam.get_paginator("list_role_policies").paginate(RoleName=role_name)
+    policies = [iam.get_role_policy(RoleName=role_name, PolicyName=name)["PolicyDocument"]
+                for page in names for name in page["PolicyNames"]]
+    attached = [policy for page in iam.get_paginator("list_attached_role_policies").paginate(
+        RoleName=role_name) for policy in page["AttachedPolicies"]]
+    checks = []
+    for actions, resource in [
+        (["s3:GetObject"], f"arn:aws:s3:::{_setting('SALES_INPUT_BUCKET')}/{_setting('SALES_INPUT_KEY')}"),
+        (["glue:GetJob", "glue:StartJobRun", "glue:GetJobRun"], _setting("SALES_JOB_ARN")),
+    ]:
+        checks.extend(iam.simulate_principal_policy(
+            PolicySourceArn=role_arn, ActionNames=actions, ResourceArns=[resource],
+        )["EvaluationResults"])
+    return {"role_arn": role_arn, "inline_policies": policies, "attached_policies": attached,
+            "permissions_boundary": role.get("PermissionsBoundary"), "simulation": checks,
+            "note": "Simulación parcial; contrastar con los logs. Las managed policies se listan sin su contenido."}
+
+
+@tool
+def inspect_sales_file() -> dict:
+    """Consulta metadatos del archivo de entrada usando el rol del agente, no el de MWAA."""
+    bucket, key = _setting("SALES_INPUT_BUCKET"), _setting("SALES_INPUT_KEY")
+    response = _client("s3").head_object(Bucket=bucket, Key=key)
+    return {"bucket": bucket, "key": key, "size": response["ContentLength"],
+            "etag": response.get("ETag"), "checked_as": "agent_runtime_role"}
+
+
 def _relative_path(path: str) -> str:
     if not path or any(p in ("", ".", "..") for p in path.split("/")) or "\\" in path:
         raise ValueError("Se requiere un path relativo sin segmentos vacíos, '.' o '..'.")
@@ -212,18 +250,24 @@ def read_repository_file(path: str, ref: str = "") -> dict:
 
 @tool
 def create_fix_pr(incident_id: str, original_sha: str, content: str,
-                  title: str, description: str) -> dict:
-    """Propone el nuevo contenido completo del DAG permitido en una draft PR.
+                  title: str, description: str, path: str = "") -> dict:
+    """Propone el contenido del DAG o archivo IAM permitido en una draft PR.
 
     incident_id debe ser estable (dag_id/run_id/task_id). Reutiliza su rama y PR.
-    Comprueba sintaxis Python; NO ejecuta el código ni valida su comportamiento.
+    Comprueba sintaxis Python. Terraform requiere revisión y terraform validate/plan externos.
+    NO ejecuta código, valida permisos efectivos ni despliega.
     """
-    path = _relative_path(_setting("GITHUB_DAG_PATH", "dags/demo_pipeline.py"))
+    dag_path = _setting("GITHUB_DAG_PATH", "dags/demo_pipeline.py")
+    path = _relative_path(path or dag_path)
+    allowed = {dag_path, os.environ.get("GITHUB_IAM_PATH", "")}
+    if path not in allowed:
+        raise ValueError("El archivo no está habilitado para correcciones.")
     if not incident_id.strip() or not title.strip() or not description.strip():
         raise ValueError("Se requieren incidente, título y descripción.")
-    if not path.endswith(".py") or len(content.encode()) > MAX_FILE_BYTES:
-        raise ValueError("La corrección debe ser un archivo Python de hasta 100 KB.")
-    ast.parse(content)
+    if not path.endswith((".py", ".tf")) or not content.strip() or len(content.encode()) > MAX_FILE_BYTES:
+        raise ValueError("La corrección debe ser un archivo Python o Terraform de hasta 100 KB.")
+    if path.endswith(".py"):
+        ast.parse(content)
     base = _setting("GITHUB_BASE_BRANCH", "main")
     branch = "agent-fix/" + hashlib.sha256(f"{incident_id}:{path}".encode()).hexdigest()[:20]
     owner = _setting("GITHUB_REPO").split("/", 1)[0]
@@ -298,7 +342,8 @@ def rerun_dag(dag_id: str, source_run_id: str) -> dict:
 
 TOOLS = [get_dag_details, list_dag_runs, get_dag_run, list_task_instances,
          list_task_log_streams, read_task_logs, read_deployed_dag,
-         read_repository_file, create_fix_pr, send_slack_message]
+         read_repository_file, create_fix_pr, send_slack_message,
+         inspect_mwaa_permissions, inspect_sales_file]
 
 
 def get_tools() -> list:

@@ -17,11 +17,11 @@ spec.loader.exec_module(module)
 class DemoPipelineTests(unittest.TestCase):
     def test_failure_is_not_hidden_by_successful_investigation(self):
         dag = module.dag
-        self.assertEqual({t.task_id for t in dag.leaves}, {"finish", "investigate_failure"})
-        self.assertEqual(dag.get_task("finish").trigger_rule, TriggerRule.ALL_SUCCESS)
+        self.assertEqual({t.task_id for t in dag.leaves}, {"process_sales", "investigate_failure"})
+        self.assertEqual(dag.get_task("process_sales").trigger_rule, TriggerRule.ALL_SUCCESS)
         investigation = dag.get_task("investigate_failure")
         self.assertIsInstance(investigation, BedrockInvokeAgentRuntimeOperator)
-        self.assertEqual(investigation.upstream_task_ids, {"divide_numbers"})
+        self.assertEqual(investigation.upstream_task_ids, {"wait_for_sales"})
         self.assertEqual(investigation.trigger_rule, TriggerRule.ONE_FAILED)
         self.assertEqual(investigation.retries, 0)
 
@@ -44,12 +44,42 @@ class DemoPipelineTests(unittest.TestCase):
         self.assertEqual(call["qualifier"], "workshop")
         self.assertEqual(json.loads(call["payload"]), {
             "environment_name": "test-mwaa", "dag_id": "demo_pipeline",
-            "run_id": "manual__incident", "task_id": "divide_numbers",
+            "run_id": "manual__incident", "task_id": "wait_for_sales",
         })
         self.assertEqual(result["response"]["status"], "accepted")
 
-    def test_demo_fails_with_zero_division(self):
-        import subprocess
-        failed = subprocess.run(module.divide_numbers.bash_command, shell=True, capture_output=True, text=True)
-        self.assertNotEqual(failed.returncode, 0)
-        self.assertIn("ZeroDivisionError", failed.stderr)
+    def test_sensor_propagates_access_denied_instead_of_waiting(self):
+        from botocore.exceptions import ClientError
+        sensor, client, stub = self.sales_sensor()
+        stub.add_client_error("head_object", service_error_code="403", http_status_code=403,
+                              expected_params={"Bucket": "sales-input", "Key": "incoming/sales.csv"})
+        with stub, self.assertRaises(ClientError):
+            sensor.poke({})
+        stub.assert_no_pending_responses()
+
+    def test_sensor_waits_only_when_file_is_missing(self):
+        sensor, client, stub = self.sales_sensor()
+        stub.add_client_error("head_object", service_error_code="404", http_status_code=404,
+                              expected_params={"Bucket": "sales-input", "Key": "incoming/sales.csv"})
+        with stub:
+            self.assertFalse(sensor.poke({}))
+
+    def test_sensor_accepts_existing_file(self):
+        sensor, client, stub = self.sales_sensor()
+        stub.add_response("head_object", {"ContentLength": 120},
+                          {"Bucket": "sales-input", "Key": "incoming/sales.csv"})
+        with stub:
+            self.assertTrue(sensor.poke({}))
+
+    def sales_sensor(self):
+        import copy
+        import boto3
+        from botocore.stub import Stubber
+        from airflow.providers.amazon.aws.hooks.s3 import S3Hook
+        sensor = copy.deepcopy(module.wait_for_sales)
+        sensor.bucket_name = "sales-input"
+        client = boto3.client("s3", region_name="us-east-1",
+                              aws_access_key_id="test", aws_secret_access_key="test")
+        sensor.hook = S3Hook(aws_conn_id=None)
+        sensor.hook.conn = client
+        return sensor, client, Stubber(client)

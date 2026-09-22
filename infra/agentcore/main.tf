@@ -16,6 +16,9 @@ resource "aws_iam_role_policy" "agent" {
     { Effect = "Allow", Action = ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"], Resource = var.repository_arn },
     { Effect = "Allow", Action = "secretsmanager:GetSecretValue", Resource = values(var.secret_arns) },
     { Effect = "Allow", Action = "s3:GetObject", Resource = "${var.bucket_arn}/dags/*" },
+    { Effect = "Allow", Action = "s3:GetObject", Resource = "arn:aws:s3:::${var.sales_input_bucket}/incoming/sales.csv" },
+    { Effect = "Allow", Action = ["iam:GetRole", "iam:ListRolePolicies", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:SimulatePrincipalPolicy"],
+    Resource = "arn:aws:iam::${local.config.account}:role/${var.mwaa_role_id}" },
     { Effect = "Allow", Action = "airflow:GetEnvironment", Resource = var.mwaa_arn },
     { Effect = "Allow", Action = "airflow:InvokeRestApi", Resource = "arn:aws:airflow:${local.config.region}:${local.config.account}:role/${local.project}/Viewer" },
     { Effect = "Allow", Action = ["logs:DescribeLogStreams", "logs:GetLogEvents"], Resource = "${var.task_log_arn}:*" },
@@ -65,6 +68,10 @@ resource "aws_bedrockagentcore_agent_runtime" "agent" {
     GITHUB_REPO           = local.config.github_repo
     GITHUB_BASE_BRANCH    = local.config.github_base_branch
     GITHUB_DAG_PATH       = local.config.github_dag_path
+    GITHUB_IAM_PATH       = "infra/mwaa/sales-access.tf"
+    SALES_INPUT_BUCKET    = var.sales_input_bucket
+    SALES_INPUT_KEY       = "incoming/sales.csv"
+    SALES_JOB_ARN         = var.sales_job_arn
     GITHUB_SECRET_ID      = var.secret_arns["github"]
     SLACK_SECRET_ID       = var.secret_arns["slack"]
     ENABLE_DAG_RERUN      = "false"

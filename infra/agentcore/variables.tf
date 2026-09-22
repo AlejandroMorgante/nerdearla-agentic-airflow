@@ -32,3 +32,7 @@ variable "vpc_id" { type = string }
 variable "model_id" { type = string }
 
 variable "agent_image_tag" { type = string }
+
+variable "sales_input_bucket" { type = string }
+
+variable "sales_job_arn" { type = string }

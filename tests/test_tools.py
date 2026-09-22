@@ -21,6 +21,9 @@ class ToolsTest(unittest.TestCase):
             "GITHUB_REPO": "demo/workshop", "GITHUB_SECRET_ID": "github-secret",
             "SLACK_SECRET_ID": "slack-secret", "GITHUB_BASE_BRANCH": "main",
             "GITHUB_DAG_PATH": "dags/demo_pipeline.py", "ENABLE_DAG_RERUN": "false",
+            "GITHUB_IAM_PATH": "infra/mwaa/sales-access.tf",
+            "SALES_INPUT_BUCKET": "sales-input", "SALES_INPUT_KEY": "incoming/sales.csv",
+            "SALES_JOB_ARN": "arn:aws:glue:us-east-1:000000000000:job/sales",
         }, clear=True)
         self.env.start()
         self.addCleanup(self.env.stop)
@@ -132,6 +135,48 @@ class ToolsTest(unittest.TestCase):
         self.assertEqual(base64.b64decode(update.kwargs["json"]["content"]), b"amount = 150\n")
         self.assertTrue(github.call_args.kwargs["json"]["draft"])
 
+    def test_pr_rejects_unconfigured_terraform_path_before_network(self):
+        with patch.object(tools, "_github") as github:
+            with self.assertRaisesRegex(ValueError, "habilitado"):
+                tools.create_fix_pr("incident", "sha", "content", "Fix", "Why", path="infra/main.tf")
+            github.assert_not_called()
+
+    def test_pr_accepts_configured_iam_file_as_draft(self):
+        content = 'resource "aws_iam_role_policy" "sales" {}'
+        with patch.object(tools, "_github", side_effect=[
+            [], None, {"object": {"sha": "commit"}}, {}, {},
+            {"html_url": "https://github.com/demo/workshop/pull/2", "state": "open"},
+        ]) as github, patch.object(tools, "_repo_file", return_value={"sha": "original", "content": "old"}):
+            tools.create_fix_pr("incident", "original", content, "Fix", "Why", path="infra/mwaa/sales-access.tf")
+        self.assertEqual(github.call_args_list[-2].args, ("PUT", "/contents/infra/mwaa/sales-access.tf"))
+        self.assertTrue(github.call_args.kwargs["json"]["draft"])
+
+    def test_file_inspection_uses_only_configured_location(self):
+        client, stub = self.aws("s3")
+        stub.add_response("head_object", {"ContentLength": 120},
+                          {"Bucket": "sales-input", "Key": "incoming/sales.csv"})
+        with stub, patch.object(tools, "_client", return_value=client):
+            self.assertEqual(tools.inspect_sales_file()["checked_as"], "agent_runtime_role")
+        stub.assert_no_pending_responses()
+
+    def test_permission_inspection_targets_mwaa_role_and_pipeline_resources(self):
+        iam = MagicMock()
+        arn = "arn:aws:iam::000000000000:role/workshop-mwaa"
+        iam.get_role.return_value = {"Role": {"Arn": arn}}
+        iam.get_paginator.return_value.paginate.side_effect = [
+            [{"PolicyNames": ["sales"]}], [{"AttachedPolicies": []}],
+        ]
+        iam.get_role_policy.return_value = {"PolicyDocument": {"Statement": []}}
+        iam.simulate_principal_policy.return_value = {"EvaluationResults": []}
+        with patch.object(tools, "_environment", return_value={"ExecutionRoleArn": arn}), \
+                patch.object(tools, "_client", return_value=iam):
+            result = tools.inspect_mwaa_permissions()
+        self.assertEqual(result["role_arn"], arn)
+        checks = iam.simulate_principal_policy.call_args_list
+        self.assertEqual(checks[0].kwargs["PolicySourceArn"], arn)
+        self.assertEqual(checks[0].kwargs["ResourceArns"], ["arn:aws:s3:::sales-input/incoming/sales.csv"])
+        self.assertEqual(checks[1].kwargs["ResourceArns"], [os.environ["SALES_JOB_ARN"]])
+
     def test_invalid_python_never_reaches_github(self):
         with patch.object(tools, "_github") as github:
             with self.assertRaises(SyntaxError):
@@ -180,7 +225,7 @@ class ToolsTest(unittest.TestCase):
     def test_tools_have_strands_schemas_without_loading_secrets(self):
         with patch.object(tools, "_client") as client:
             schemas = [t.tool_spec for t in tools.get_tools()]
-            self.assertEqual(len(schemas), 10)
+            self.assertEqual(len(schemas), 12)
             self.assertTrue(all(s["inputSchema"]["json"]["type"] == "object" for s in schemas))
             client.assert_not_called()
 

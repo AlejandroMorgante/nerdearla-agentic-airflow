@@ -11,7 +11,8 @@ infra/
   agentcore/        # Runtime, endpoint, IAM y logs del agente
   mwaa/             # Airflow, IAM, logs y requirements.txt
   vpc/              # Red, subnets y NAT
-  s3/               # Bucket, DAG y requisitos versionados
+  s3/               # Artefactos, buckets de ventas y CSV de ejemplo
+  glue/             # Job Spark, script, rol y logs
   ecr/              # Repositorio de imágenes
   secrets-manager/  # Secretos vacíos de GitHub y Slack
   kms/              # Clave de cifrado compartida
@@ -29,8 +30,8 @@ Docker se usa para construir la imagen del agente; Terraform se ejecuta directam
 
 MWAA y AgentCore usan subnets privadas con salida por NAT. La UI de MWAA es
 pública con autenticación AWS; AgentCore requiere IAM. El agente tiene acceso
-Viewer a Airflow y la reejecución está deshabilitada. Los logs están cifrados con
-KMS y se conservan siete días. Un solo NAT simplifica la demo, sin alta disponibilidad.
+Viewer a Airflow y la reejecución está deshabilitada. Los logs de MWAA y AgentCore están cifrados con
+KMS; todos los grupos gestionados se conservan siete días. Un solo NAT simplifica la demo, sin alta disponibilidad.
 
 Verificar las zonas soportadas por AgentCore en la cuenta donde se desplegará;
 los nombres de Availability Zones pueden corresponder a IDs diferentes entre cuentas.
@@ -150,7 +151,7 @@ El token de GitHub necesita Contents y Pull requests con escritura en este repo.
 El Runtime puede crearse con secretos vacíos; esas tools funcionarán después de
 completarlos. Para Slack se usa un Incoming Webhook.
 
-Terraform crea `mwaa_environment_name` y, al habilitar el Runtime,
+Terraform crea `mwaa_environment_name`, `sales_input_bucket`, `sales_glue_job` y, al habilitar el Runtime,
 `agentcore_runtime_arn` bajo `${project}/airflow/variables/` en Secrets Manager.
 También configura el backend de Airflow y el permiso de lectura del rol de MWAA;
 no hay que cargar Variables en la UI. Son referencias de infraestructura, sin tokens,
@@ -159,7 +160,7 @@ por separado y MWAA no tiene acceso a ellos.
 Las Variables del backend se consultan al ejecutar la tarea y no aparecen en el
 listado de Variables de la UI. El operador usa el endpoint `workshop` con
 `invoke_agent_runtime_kwargs={"qualifier": "workshop"}`. La rama
-`investigate_failure` invoca el agente cuando falla `divide_numbers`. Después de
+`investigate_failure` invoca el agente cuando falla `wait_for_sales`. Después de
 actualizar el DAG local, ejecutar `terraform apply` para publicarlo en S3.
 
 [Backend Secrets Manager para MWAA](https://docs.aws.amazon.com/mwaa/latest/userguide/connections-secrets-manager.html)
@@ -167,6 +168,24 @@ actualizar el DAG local, ejecutar `terraform apply` para publicarlo en S3.
 Antes de la demo, comprobar MWAA `AVAILABLE`, Runtime y endpoint `READY`, la
 instalación de los requisitos y una investigación completa. La validación local
 y el plan no comprueban permisos efectivos, conectividad ni que la imagen arranque.
+
+## Incidente de permisos
+
+El sensor consulta `incoming/sales.csv`, cargado por Terraform. El rol MWAA
+sólo puede listar el bucket de entrada: falta `s3:GetObject` para ese objeto y
+faltan los permisos Glue para el job. La primera tarea falla por acceso y bloquea
+el procesamiento. No ejecutar manualmente la tarea Glue saltándose dependencias.
+
+La PR del agente puede modificar `mwaa/sales-access.tf`. Ese módulo recibe
+`sales_input_arn` y `sales_job_arn` para proponer permisos sobre recursos concretos.
+El agente puede leer las políticas inline y simular acciones del rol de MWAA;
+no puede modificar IAM ni desplegar. Su acceso de lectura al archivo permite
+comprobar existencia, pero no implica que MWAA tenga ese mismo acceso.
+
+Glue usa su propio rol y un script Spark en `glue/sales.py`. Si se decide aplicar
+el fix y probar el procesamiento, genera Parquet en `sales/` del bucket de salida.
+El job usa dos workers G.1X, máximo diez minutos, sin reintentos. No hay Athena
+ni Lambda en este ejemplo.
 
 ## Limpieza
 

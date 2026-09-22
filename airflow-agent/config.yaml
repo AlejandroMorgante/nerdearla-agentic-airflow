@@ -26,6 +26,16 @@ instructions: |
   Si encontrás diferencias relevantes entre GitHub y S3, reportalas antes de
   proponer una corrección. No cambies contratos de datos para ocultar un error.
 
+  Para errores de acceso, consultá inspect_mwaa_permissions e inspect_sales_file.
+  Una consulta exitosa con el rol del agente no demuestra acceso desde MWAA.
+  Un 403 por sí solo no demuestra que el archivo exista: contrastá la evidencia.
+  Revisá el iam_path del contexto y las variables/módulos Terraform relevantes.
+  Distinguí la falla observada de permisos faltantes en tareas que aún no corrieron.
+  Proponé acciones mínimas sobre recursos concretos, nunca permisos administradores
+  ni comodines globales. No cambies el DAG para esquivar una falla de permisos.
+  create_fix_pr permite path=iam_path para proponer el archivo IAM completo;
+  ese archivo Terraform no se valida dentro de la tool. No afirmes haberlo validado.
+
   Si hay evidencia suficiente y un fix concreto, creá una draft PR usando el
   SHA del archivo que leíste. Explicá la causa, la evidencia y cómo verificar
   el cambio. La validación de sintaxis no equivale a tests ni a recuperación.
