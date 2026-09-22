@@ -6,6 +6,7 @@ mock_provider "aws" {
 
 run "foundation_before_image" {
   command = plan
+  variables { agent_image_tag = null }
 
   assert {
     condition     = output.runtime_arn == null && output.endpoint_name == null

@@ -195,8 +195,9 @@ Esta recepción asíncrona no es una cola durable: si el proceso del agente se
 pierde, el trabajo en memoria puede perderse. `accepted` confirma recepción,
 no recuperación ni entrega garantizada. No se habilita merge ni rerun automático.
 
-Antes de ejecutar el DAG, configurar en Airflow las Variables
-`agentcore_runtime_arn` y `mwaa_environment_name` con los outputs de Terraform.
+Terraform crea las Variables `agentcore_runtime_arn` y `mwaa_environment_name`
+en Secrets Manager y configura el backend de Airflow para consultarlas.
+No hay que cargarlas en la UI; tampoco aparecen en el listado de Variables de la UI.
 Se resuelven al ejecutar la tarea, no al importar el DAG. El operador usa el rol
 IAM de MWAA (`aws_conn_id=None`), endpoint `workshop` y un timeout de lectura de
 120 segundos para el arranque y la recepción, independiente del límite de triage.
@@ -209,7 +210,7 @@ Para validar el DAG con Airflow 3.3.1 y provider Amazon 9.34.0, ejecutar
 ## Próximos pasos
 
 1. Desplegar la infraestructura definida en [infra/README.md](infra/README.md) y completar los secretos.
-2. Configurar las Variables de Airflow y ejecutar el DAG para validar la investigación real.
+2. Ejecutar el DAG para validar la investigación real con las Variables gestionadas por Terraform.
 3. Completar el despliegue y comprobar la recuperación después del merge.
 
 Pendiente validar versión de MWAA y provider Amazon, IAM, conectividad y secretos.

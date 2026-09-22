@@ -51,6 +51,10 @@ module "ecr" {
 module "secrets_manager" {
   source = "./secrets-manager"
   config = local.config
+  airflow_variables = merge(
+    { mwaa_environment_name = local.config.project },
+    var.agent_image_tag == null ? {} : { agentcore_runtime_arn = module.agentcore.runtime_arn },
+  )
 }
 
 module "kms" {

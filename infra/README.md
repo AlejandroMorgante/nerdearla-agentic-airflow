@@ -105,8 +105,9 @@ terraform plan -out=workshop.tfplan
 terraform apply workshop.tfplan
 ```
 
-Terraform sube el DAG y los requisitos a S3 y pasa el VersionId a MWAA.
-Un cambio local en esos archivos se publica con el próximo `apply`.
+Terraform sube el DAG y los requisitos a S3 y pasa el VersionId de los requisitos a MWAA.
+Un cambio local en esos archivos se publica con el próximo `apply`: el DAG se
+actualiza en la misma clave de S3 y MWAA lo sincroniza automáticamente.
 
 3. Construir y publicar la imagen ARM64. Usar un tag nuevo en cada actualización
 y la misma región que en `config.yaml` (el ejemplo usa `us-east-1`):
@@ -132,6 +133,11 @@ terraform apply workshop.tfplan
 terraform output
 ```
 
+Terraform configura el Runtime con el tag indicado; no ejecuta el build de Docker.
+Si cambia el código del agente, repetir el build/push con un tag nuevo y actualizar
+`agent_image_tag` antes del siguiente `terraform apply`. Si sólo cambia el DAG,
+alcanza con `terraform apply`: no hace falta reconstruir la imagen.
+
 5. Seguir el [paso a paso de Slack y GitHub](integrations.md) y cargar los valores
 de los secretos desde la consola de Secrets Manager:
 
@@ -144,13 +150,19 @@ El token de GitHub necesita Contents y Pull requests con escritura en este repo.
 El Runtime puede crearse con secretos vacíos; esas tools funcionarán después de
 completarlos. Para Slack se usa un Incoming Webhook.
 
-El output `runtime_arn` y el endpoint `workshop` se usarán al conectar el
-`BedrockInvokeAgentRuntimeOperator`, con
-`invoke_agent_runtime_kwargs={"qualifier": "workshop"}`.
-En la UI de Airflow, crear las Variables `agentcore_runtime_arn` (output
-`runtime_arn`) y `mwaa_environment_name` (output del mismo nombre). La rama
+Terraform crea `mwaa_environment_name` y, al habilitar el Runtime,
+`agentcore_runtime_arn` bajo `${project}/airflow/variables/` en Secrets Manager.
+También configura el backend de Airflow y el permiso de lectura del rol de MWAA;
+no hay que cargar Variables en la UI. Son referencias de infraestructura, sin tokens,
+y sus valores sí quedan en el state. Los secretos de GitHub y Slack siguen cargándose
+por separado y MWAA no tiene acceso a ellos.
+Las Variables del backend se consultan al ejecutar la tarea y no aparecen en el
+listado de Variables de la UI. El operador usa el endpoint `workshop` con
+`invoke_agent_runtime_kwargs={"qualifier": "workshop"}`. La rama
 `investigate_failure` invoca el agente cuando falla `divide_numbers`. Después de
 actualizar el DAG local, ejecutar `terraform apply` para publicarlo en S3.
+
+[Backend Secrets Manager para MWAA](https://docs.aws.amazon.com/mwaa/latest/userguide/connections-secrets-manager.html)
 
 Antes de la demo, comprobar MWAA `AVAILABLE`, Runtime y endpoint `READY`, la
 instalación de los requisitos y una investigación completa. La validación local
