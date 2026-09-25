@@ -1,10 +1,8 @@
 """Agente de investigación de Airflow, expuesto por AgentCore Runtime."""
 
-import asyncio
 import json
 import os
 import time
-import threading
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
@@ -159,7 +157,7 @@ class Investigation:
 
 
 def validate_incident(payload: dict) -> Incident | dict:
-    """Valida el contexto antes de aceptar trabajo en segundo plano."""
+    """Valida el contexto del incidente antes de investigar."""
     try:
         incident = Incident.model_validate(payload)
     except ValidationError:
@@ -173,7 +171,7 @@ def validate_incident(payload: dict) -> Incident | dict:
 
 
 async def investigate(payload: dict) -> dict:
-    """Ejecuta el loop de Strands; su resultado queda fuera del DAG."""
+    """Ejecuta el loop de Strands y devuelve el resultado final del triage."""
     incident = validate_incident(payload)
     if isinstance(incident, dict):
         return incident
@@ -217,34 +215,12 @@ async def investigate(payload: dict) -> dict:
         return investigation.response("error", error_type=type(error).__name__)
 
 
-def investigate_in_background(payload: dict, task_id: int) -> None:
-    try:
-        result = asyncio.run(investigate(payload))
-        app.logger.info("Investigation result: %s", json.dumps(result, ensure_ascii=False))
-    except Exception as error:
-        app.logger.error("Investigation failed: %s", type(error).__name__)
-    finally:
-        app.complete_async_task(task_id)
-
-
 @app.entrypoint
 async def invoke(payload: dict) -> dict:
-    """Acepta el incidente y responde sin esperar el triage."""
-    incident = validate_incident(payload)
-    if isinstance(incident, dict):
-        return incident
-    try:
-        load_config()
-    except (OSError, ValueError, yaml.YAMLError):
-        return {"status": "configuration_error", "message": "Revisar config.yaml."}
-    task_id = app.add_async_task("airflow_triage", incident.model_dump())
-    try:
-        threading.Thread(target=investigate_in_background,
-                         args=(incident.model_dump(), task_id), daemon=True).start()
-    except Exception as error:
-        app.complete_async_task(task_id)
-        return {"status": "error", "error_type": type(error).__name__}
-    return {"status": "accepted", "incident": incident.model_dump()}
+    """Espera el triage completo antes de responder."""
+    result = await investigate(payload)
+    app.logger.info("Investigation result: %s", json.dumps(result, ensure_ascii=False))
+    return result
 
 
 if __name__ == "__main__":

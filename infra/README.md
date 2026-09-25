@@ -132,7 +132,8 @@ Estas referencias de infraestructura sí entran al state y se eliminan con el en
 Al finalizar, comprobar MWAA `AVAILABLE`, Runtime y endpoint `READY`, y ejecutar
 manualmente el DAG para probar el incidente. El procesamiento se bloquea por los
 permisos omitidos intencionalmente; un apply exitoso no equivale a una prueba end-to-end.
-El operador invoca el endpoint `workshop` y el agente continúa el triage en segundo plano.
+El operador invoca el endpoint `workshop` y espera a que el agente termine el triage
+antes de responder (hasta unos minutos, según los límites de `airflow-agent/config.yaml`).
 
 [Backend Secrets Manager para MWAA](https://docs.aws.amazon.com/mwaa/latest/userguide/connections-secrets-manager.html)
 

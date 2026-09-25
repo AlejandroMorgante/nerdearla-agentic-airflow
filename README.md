@@ -74,8 +74,8 @@ S3KeySensor → GlueJobOperator → AthenaOperator
 
 El archivo existe, pero omitimos intencionalmente su permiso de lectura en el rol
 de MWAA. El sensor falla con `403` y el operador de AgentCore envía el contexto
-del incidente. El agente acepta la solicitud y continúa el triage en segundo plano;
-**el DAG queda fallido**.
+del incidente; la tarea espera a que el agente termine el triage antes de
+responder. **El DAG queda fallido** igual, por la falla del sensor.
 
 El resultado esperado es un diagnóstico, una draft PR con el permiso faltante y
 un aviso en Slack. Una persona revisa y aplica el cambio: no hay merge ni
