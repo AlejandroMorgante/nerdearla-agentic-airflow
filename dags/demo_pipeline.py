@@ -22,21 +22,15 @@ with DAG(
         bucket_name="{{ var.value.sales_input_bucket }}",
         bucket_key="incoming/sales.csv",
         aws_conn_id=None,
-        deferrable=False,
         mode="reschedule",
         poke_interval=30,
         timeout=300,
     )
 
-    # Pasos ilustrativos: la POC se detiene en la falla de acceso del sensor.
     process_sales = GlueJobOperator(
         task_id="process_sales",
         job_name="sales-etl",
         aws_conn_id=None,
-        update_config=False,
-        wait_for_completion=True,
-        deferrable=False,
-        verbose=False,
     )
 
     summarize_sales = AthenaOperator(
@@ -50,7 +44,6 @@ with DAG(
         database="sales",
         workgroup="sales-reports",
         aws_conn_id=None,
-        deferrable=False,
     )
 
     investigate_failure = BedrockInvokeAgentRuntimeOperator(
@@ -61,13 +54,13 @@ with DAG(
             "environment_name": "{{ var.value.mwaa_environment_name }}",
             "dag_id": "{{ dag.dag_id }}",
             "run_id": "{{ run_id }}",
-            "task_id": "wait_for_sales",
+            "task_id": "{{ dag_run.get_task_instances(task_ids=task.upstream_task_ids, state='failed')[0].task_id }}",
         },
         invoke_agent_runtime_kwargs={"qualifier": "workshop"},
         aws_conn_id=None,
         do_xcom_push=False,
-        botocore_config={"read_timeout": 120, "retries": {"total_max_attempts": 1}},
+        botocore_config={"read_timeout": 600, "retries": {"total_max_attempts": 1}},
     )
 
     wait_for_sales >> process_sales >> summarize_sales
-    wait_for_sales >> investigate_failure
+    [wait_for_sales, process_sales, summarize_sales] >> investigate_failure
