@@ -8,6 +8,11 @@ from airflow.sdk import DAG
 from airflow.task.trigger_rule import TriggerRule
 
 
+def _record_failed_task(context):
+    """on_failure_callback: deja el task_id real en XCom para investigate_failure."""
+    context["ti"].xcom_push(key="failed_task_id", value=context["ti"].task_id)
+
+
 with DAG(
     dag_id="demo_pipeline",
     schedule=None,
@@ -25,12 +30,14 @@ with DAG(
         mode="reschedule",
         poke_interval=30,
         timeout=300,
+        on_failure_callback=_record_failed_task,
     )
 
     process_sales = GlueJobOperator(
         task_id="process_sales",
         job_name="sales-etl",
         aws_conn_id=None,
+        on_failure_callback=_record_failed_task,
     )
 
     summarize_sales = AthenaOperator(
@@ -44,6 +51,7 @@ with DAG(
         database="sales",
         workgroup="sales-reports",
         aws_conn_id=None,
+        on_failure_callback=_record_failed_task,
     )
 
     investigate_failure = BedrockInvokeAgentRuntimeOperator(
@@ -54,7 +62,7 @@ with DAG(
             "environment_name": "{{ var.value.mwaa_environment_name }}",
             "dag_id": "{{ dag.dag_id }}",
             "run_id": "{{ run_id }}",
-            "task_id": "{{ dag_run.get_task_instances(task_ids=task.upstream_task_ids, state='failed')[0].task_id }}",
+            "task_id": "{{ ti.xcom_pull(key='failed_task_id') }}",
         },
         invoke_agent_runtime_kwargs={"qualifier": "workshop"},
         aws_conn_id=None,
